@@ -1,0 +1,2 @@
+# PAD
+Programarea Aplicațiilor Distribuite 
