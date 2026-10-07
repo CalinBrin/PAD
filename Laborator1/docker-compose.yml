@@ -1,0 +1,45 @@
+services:
+  broker:
+    build:
+      context: .
+      dockerfile: deployment/Dockerfile
+      args: { SERVICE: src/integration-service }
+    command: ["-listen", ":7000", "-admin", ":8081", "-data", "/data", "-queues", "orders:inventory,orders:billing", "-ack-timeout", "10s"]
+    ports: ["7000:7000", "8081:8081"]
+    volumes: ["broker-data:/data"]
+    restart: unless-stopped
+
+  order-service:
+    build:
+      context: .
+      dockerfile: deployment/Dockerfile
+      args: { SERVICE: src/order-service }
+    command: ["-broker", "broker:7000", "-listen", ":8080"]
+    ports: ["8080:8080"]
+    depends_on: [broker]
+    restart: unless-stopped
+
+  inventory:
+    build:
+      context: .
+      dockerfile: deployment/Dockerfile
+      args: { SERVICE: src/consumers/inventory }
+    command: ["-broker", "broker:7000", "-data", "/data", "-workers", "2"]
+    volumes: ["inventory-data:/data"]
+    depends_on: [broker]
+    restart: unless-stopped
+
+  billing:
+    build:
+      context: .
+      dockerfile: deployment/Dockerfile
+      args: { SERVICE: src/consumers/billing }
+    command: ["-broker", "broker:7000", "-data", "/data", "-workers", "2"]
+    volumes: ["billing-data:/data"]
+    depends_on: [broker]
+    restart: unless-stopped
+
+volumes:
+  broker-data:
+  inventory-data:
+  billing-data:

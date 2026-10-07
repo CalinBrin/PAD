@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "order-created.v1",
+  "title": "Payload of the OrderCreated event, schema version 1",
+  "type": "object",
+  "required": ["order_id", "customer_id", "amount"],
+  "properties": {
+    "order_id": { "type": "string", "minLength": 1 },
+    "customer_id": { "type": "string", "minLength": 1 },
+    "amount": { "type": "number" }
+  },
+  "additionalProperties": false
+}

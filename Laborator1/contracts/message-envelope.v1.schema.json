@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "message-envelope.v1",
+  "title": "Message envelope, schema version 1",
+  "type": "object",
+  "required": ["id", "type", "timestamp", "correlation_id", "schema_version", "payload"],
+  "properties": {
+    "id": { "type": "string", "minLength": 1, "description": "Unique message id, also the deduplication key" },
+    "type": { "type": "string", "minLength": 1 },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "correlation_id": { "type": "string", "minLength": 1, "description": "Identifier shared by every log line of one business flow" },
+    "schema_version": { "type": "integer", "minimum": 1, "maximum": 1 },
+    "payload": { "type": "object" }
+  },
+  "additionalProperties": false
+}
