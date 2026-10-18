@@ -3,7 +3,7 @@
 #   1. normal order            -> both consumers process it
 #   2. FAILURE SCENARIO        -> inventory crashes after the local effect, before ACK;
 #                                 it is restarted, the message is redelivered, dedup skips the effect
-#   3. poison order (amount<0) -> billing NACKs every attempt, message ends in the DLQ
+#   3. poison order (amount<0) -> billing NACKs it as a permanent error, message goes to the DLQ without retry
 # Output: logs/*.log and logs/correlated.log (all log lines of the three flows, sorted by time).
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -61,7 +61,7 @@ echo; echo "== 2) normal order"
 post demo-normal-001 50
 sleep 1
 
-echo; echo "== 3) poison order (negative amount): billing rejects it on every attempt"
+echo; echo "== 3) poison order (negative amount): billing rejects it as permanent, straight to the DLQ"
 post demo-poison-001 -1
 sleep 3
 

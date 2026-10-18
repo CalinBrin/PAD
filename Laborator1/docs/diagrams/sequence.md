@@ -55,7 +55,7 @@ sequenceDiagram
     Note over B,S: Efectul s-a produs o singură dată, livrarea de două ori
 ```
 
-## 3. Retry și dead-letter queue
+## 3. Eroare permanentă: direct în dead-letter queue
 
 ```mermaid
 sequenceDiagram
@@ -63,14 +63,32 @@ sequenceDiagram
     participant B as Broker
     participant L as billing
 
-    B->>L: deliver (attempt=1)
-    L-->>B: nack (amount <= 0)
-    B->>B: așteaptă backoff 1x
-    B->>L: deliver (attempt=2)
-    L-->>B: nack
-    B->>B: așteaptă backoff 2x
-    B->>L: deliver (attempt=3)
-    L-->>B: nack
-    B->>B: attempts = max-attempts, append dlq
-    Note over B: mesajul este în orders.billing DLQ, vizibil la GET /dlq
+    B->>L: deliver (tag=7, attempt=1)
+    L-->>B: nack (tag=7, permanent=true, amount <= 0)
+    B->>B: append dlq (attempts=1, permanent=true)
+    Note over B: fără retry: o comandă cu sumă negativă nu devine validă la a doua încercare
+```
+
+## 4. Eroare tranzitorie: retry pe alt consumator, apoi DLQ
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant B as Broker
+    participant L1 as billing-1
+    participant L2 as billing-2
+
+    B->>L1: deliver (tag=1, attempt=1)
+    L1-->>B: nack (tag=1, eroare tranzitorie)
+    B->>B: backoff 1x, billing-1 marcat ca eșuat pentru acest mesaj
+    B->>L2: deliver (tag=2, attempt=2)
+    alt billing-2 reușește
+        L2-->>B: ack (tag=2)
+    else și billing-2 eșuează
+        L2-->>B: nack (tag=2)
+        B->>B: toți consumatorii au eșuat, backoff 2x
+        B->>L1: deliver (tag=3, attempt=3)
+        L1-->>B: nack (tag=3)
+        B->>B: attempts = max-attempts, append dlq
+    end
 ```

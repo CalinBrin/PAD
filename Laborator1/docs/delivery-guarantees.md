@@ -15,8 +15,9 @@ Mesajul este considerat livrat doar după `ack`, deci consumer-ul trimite `ack` 
 
 | Eveniment | Reacția broker-ului |
 |---|---|
-| `nack` explicit | retry cu backoff exponențial, apoi DLQ după `max-attempts` |
-| consumer-ul nu răspunde în `ack-timeout` | tratat ca eșec, retry |
+| `nack` explicit (eroare tranzitorie) | retry cu backoff exponențial pe alt consumator al grupului, dacă există, apoi DLQ după `max-attempts` |
+| `nack` cu `permanent=true` | DLQ imediat, fără retry (retry-ul ar eșua la fel) |
+| consumer-ul nu răspunde în `ack-timeout` | tratat ca eșec, retry pe alt consumator, dacă există |
 | conexiunea consumer-ului cade | mesajele in-flight revin imediat în coadă |
 | broker-ul pică și repornește | mesajele neconfirmate se reîncarcă din log |
 
@@ -52,6 +53,7 @@ Dacă `ack` se trimite ÎNAINTE de procesare (`-ack-mode before`), broker-ul șt
 - Mesajul retrimis revine pe poziția lui inițială în coadă (ordonare după numărul de secvență), nu la coadă.
 - NU există ordine între consumatorii concurenți ai aceluiași grup (`-workers 2` sau mai multe procese): doi consumatori procesează în paralel, deci ordinea de terminare nu e garantată.
 - NU există ordine între cozi (grupuri) diferite.
+- Un mesaj retrimis care așteaptă un consumator sănătos (pentru că singurul liber l-a eșuat deja) poate fi depășit de mesajele de după el.
 - Dacă o aplicație are nevoie de ordine strictă, folosește un singur consumer per grup cu `prefetch=1`.
 
 ## Limite cunoscute

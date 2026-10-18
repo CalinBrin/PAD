@@ -1,12 +1,16 @@
 package unit
 
 import (
+	"errors"
+	"io"
+	"log/slog"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"pad-lab1/src/consumers/common"
 	"pad-lab1/src/integration-service/broker"
+	"pad-lab1/src/integration-service/client"
 	"pad-lab1/src/integration-service/protocol"
 )
 
@@ -79,5 +83,35 @@ func TestEffectStoreSurvivesRestart(t *testing.T) {
 	defer s2.Close()
 	if !s2.Has("m1") || s2.Count("m1") != 1 || s2.Total() != 1 {
 		t.Fatal("restarted store must remember applied effects (dedup key)")
+	}
+}
+
+// Errors about the message itself are permanent; a failed local write is not.
+func TestProcessorClassifiesPermanentErrors(t *testing.T) {
+	store, err := common.OpenEffectStore(filepath.Join(t.TempDir(), "effects.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	p := &common.Processor{Consumer: "billing", Action: "create_invoice", Store: store, Dedup: true, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Validate: func(o protocol.OrderCreated) error {
+			if o.Amount <= 0 {
+				return errors.New("cannot invoice a non-positive amount")
+			}
+			return nil
+		}}
+
+	bad, _ := protocol.NewMessage(protocol.TypeOrderCreated, "c", protocol.OrderCreated{OrderID: "o1", CustomerID: "c1", Amount: -5})
+	if err := p.Handle(client.Delivery{Message: bad, Attempt: 1}); !client.IsPermanent(err) {
+		t.Fatalf("business validation error must be permanent, got %v", err)
+	}
+	unknown, _ := protocol.NewMessage("SomethingElse", "c", map[string]int{})
+	if err := p.Handle(client.Delivery{Message: unknown, Attempt: 1}); !client.IsPermanent(err) {
+		t.Fatalf("unsupported type must be permanent, got %v", err)
+	}
+	good, _ := protocol.NewMessage(protocol.TypeOrderCreated, "c", protocol.OrderCreated{OrderID: "o2", CustomerID: "c1", Amount: 5})
+	store.Close() // the local write now fails: a transient error, to be retried
+	if err := p.Handle(client.Delivery{Message: good, Attempt: 1}); err == nil || client.IsPermanent(err) {
+		t.Fatalf("a failed effect write must be a transient error, got %v", err)
 	}
 }

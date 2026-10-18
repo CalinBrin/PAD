@@ -87,9 +87,13 @@ func TestWireFramesGolden(t *testing.T) {
 	if string(del) != `{"type":"deliver","attempt":2,"redelivered":true}` {
 		t.Errorf("deliver frame changed: %s", del)
 	}
-	ack, _ := json.Marshal(protocol.Frame{Type: protocol.FrameAck, ID: "m1"})
-	if string(ack) != `{"type":"ack","id":"m1"}` {
+	ack, _ := json.Marshal(protocol.Frame{Type: protocol.FrameAck, ID: "m1", Tag: 7})
+	if string(ack) != `{"type":"ack","id":"m1","tag":7}` {
 		t.Errorf("ack frame changed: %s", ack)
+	}
+	nack, _ := json.Marshal(protocol.Frame{Type: protocol.FrameNack, ID: "m1", Tag: 7, Reason: "bad amount", Permanent: true})
+	if string(nack) != `{"type":"nack","id":"m1","tag":7,"reason":"bad amount","permanent":true}` {
+		t.Errorf("nack frame changed: %s", nack)
 	}
 }
 

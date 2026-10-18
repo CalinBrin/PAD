@@ -27,8 +27,8 @@ const (
 	FrameSubscribe = "subscribe" // client -> broker
 	FrameSubAck    = "suback"    // broker -> client
 	FrameDeliver   = "deliver"   // broker -> consumer
-	FrameAck       = "ack"       // consumer -> broker (processing confirmed)
-	FrameNack      = "nack"      // consumer -> broker (processing failed)
+	FrameAck       = "ack"       // consumer -> broker (processing confirmed), carries the delivery tag
+	FrameNack      = "nack"      // consumer -> broker (processing failed), carries the delivery tag
 	FrameError     = "error"     // broker -> client
 )
 
@@ -57,11 +57,13 @@ type Frame struct {
 	Name        string   `json:"name,omitempty"`
 	Prefetch    int      `json:"prefetch,omitempty"`
 	ID          string   `json:"id,omitempty"`
+	Tag         uint64   `json:"tag,omitempty"` // delivery tag: unique per delivery, echoed by ack/nack
 	Message     *Message `json:"message,omitempty"`
 	Attempt     int      `json:"attempt,omitempty"`
 	Redelivered bool     `json:"redelivered,omitempty"`
 	Routed      int      `json:"routed,omitempty"`
 	Reason      string   `json:"reason,omitempty"`
+	Permanent   bool     `json:"permanent,omitempty"` // nack only: do not retry, dead-letter now
 }
 
 // NewID returns a random 128-bit hex identifier.

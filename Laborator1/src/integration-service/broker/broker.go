@@ -9,9 +9,16 @@
 //   - delivery is at-least-once: a message stays in-flight until ACK
 //   - NACK, ack timeout and consumer disconnect cause redelivery
 //   - after MaxAttempts deliveries the message goes to the dead-letter queue
+//   - a NACK marked permanent goes to the DLQ at once, without retries
+//   - a retried message goes to a consumer that has not failed it yet, when
+//     the group has one
 //   - ordering: FIFO per queue for first deliveries; redelivered messages are
 //     put back at their original position, but there is no ordering between
 //     competing consumers of the same group
+//
+// In-flight deliveries are keyed by a delivery tag (unique per delivery), not
+// by message ID, so two messages published with the same ID are tracked and
+// acknowledged independently.
 package broker
 
 import (
@@ -58,6 +65,7 @@ type entry struct {
 	msg      protocol.Message
 	attempts int
 	seq      uint64
+	failedBy map[*consumer]bool // consumers that NACKed or timed out on this entry
 }
 
 type consumer struct {
@@ -69,6 +77,7 @@ type consumer struct {
 }
 
 type inflightMsg struct {
+	tag      uint64
 	e        *entry
 	cons     *consumer
 	deadline time.Time
@@ -77,7 +86,7 @@ type inflightMsg struct {
 type queue struct {
 	name, topic, group string
 	pending            []*entry
-	inflight           map[string]*inflightMsg
+	inflight           map[uint64]*inflightMsg // key: delivery tag
 	consumers          []*consumer
 	rr                 int
 	retrying           int
@@ -102,6 +111,7 @@ type Broker struct {
 	topics map[string][]*queue
 	conns  map[*conn]struct{}
 	seq    uint64
+	tag    uint64 // last delivery tag
 	closed bool
 
 	ln   net.Listener
@@ -147,7 +157,7 @@ func New(cfg Config) (*Broker, error) {
 }
 
 func (b *Broker) newQueue(name, topic, group string) *queue {
-	q := &queue{name: name, topic: topic, group: group, inflight: map[string]*inflightMsg{}}
+	q := &queue{name: name, topic: topic, group: group, inflight: map[uint64]*inflightMsg{}}
 	b.queues[name] = q
 	b.topics[topic] = append(b.topics[topic], q)
 	return q
@@ -214,10 +224,30 @@ func (b *Broker) serveConn(c *conn) {
 	dec := json.NewDecoder(bufio.NewReader(c.nc))
 	for {
 		var f protocol.Frame
-		if err := dec.Decode(&f); err != nil {
-			break // EOF, reset or malformed frame: all end the session
+		err := dec.Decode(&f)
+		if err == nil {
+			b.handle(c, f)
+			continue
 		}
-		b.handle(c, f)
+		var typeErr *json.UnmarshalTypeError
+		if errors.As(err, &typeErr) {
+			// Valid JSON with a wrong field type: the stream is still in sync,
+			// so report it and keep the session.
+			c.send(protocol.Frame{Type: protocol.FrameError, Reason: "invalid frame: " + err.Error()})
+			continue
+		}
+		var syntaxErr *json.SyntaxError
+		if errors.As(err, &syntaxErr) {
+			// Invalid JSON: the stream cannot be resynchronised. Tell the
+			// client why, then close after the error frame is written.
+			b.log.Warn("invalid JSON frame, closing connection", "remote", c.nc.RemoteAddr().String(), "error", err)
+			c.sendFinal(protocol.Frame{Type: protocol.FrameError, Reason: "invalid JSON: " + err.Error()})
+			select {
+			case <-c.done:
+			case <-time.After(time.Second):
+			}
+		}
+		break // EOF, reset, torn frame or invalid JSON: the session ends
 	}
 	c.close()
 	b.dropConn(c)
@@ -230,9 +260,9 @@ func (b *Broker) handle(c *conn, f protocol.Frame) {
 	case protocol.FrameSubscribe:
 		b.onSubscribe(c, f)
 	case protocol.FrameAck:
-		b.onAck(c, f.ID)
+		b.onAck(c, f)
 	case protocol.FrameNack:
-		b.onNack(c, f.ID, f.Reason)
+		b.onNack(c, f)
 	default:
 		c.send(protocol.Frame{Type: protocol.FrameError, Reason: "unknown frame type " + f.Type})
 	}
@@ -311,21 +341,37 @@ func (b *Broker) onSubscribe(c *conn, f protocol.Frame) {
 	b.dispatch(q)
 }
 
-func (b *Broker) onAck(c *conn, id string) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
+// inflightFor returns the delivery acknowledged by f, if it belongs to this
+// connection (mu held).
+func (b *Broker) inflightFor(c *conn, f protocol.Frame) (*consumer, *inflightMsg) {
 	cons := c.sub
 	if cons == nil {
+		c.send(protocol.Frame{Type: protocol.FrameError, ID: f.ID, Reason: f.Type + " before subscribe"})
+		return nil, nil
+	}
+	if f.Tag == 0 {
+		c.send(protocol.Frame{Type: protocol.FrameError, ID: f.ID, Reason: f.Type + " requires the delivery tag"})
+		return nil, nil
+	}
+	in := cons.q.inflight[f.Tag]
+	if in == nil || in.cons != cons {
+		b.log.Warn("ignoring "+f.Type+" for unknown or expired delivery", "queue", cons.q.name, "message_id", f.ID, "tag", f.Tag, "consumer", cons.name)
+		return nil, nil
+	}
+	return cons, in
+}
+
+func (b *Broker) onAck(c *conn, f protocol.Frame) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	cons, in := b.inflightFor(c, f)
+	if in == nil {
 		return
 	}
 	q := cons.q
-	in := q.inflight[id]
-	if in == nil || in.cons != cons {
-		b.log.Warn("ignoring ack for unknown or expired delivery", "queue", q.name, "message_id", id, "consumer", cons.name)
-		return
-	}
-	delete(q.inflight, id)
+	delete(q.inflight, in.tag)
 	cons.inflight--
+	id := in.e.msg.ID
 	if err := b.st.append(record{Op: opAck, Queue: q.name, ID: id}); err != nil {
 		b.log.Error("could not persist ack, message may be redelivered after restart", "message_id", id, "error", err)
 	}
@@ -333,68 +379,106 @@ func (b *Broker) onAck(c *conn, id string) {
 	b.dispatch(q)
 }
 
-func (b *Broker) onNack(c *conn, id, reason string) {
+func (b *Broker) onNack(c *conn, f protocol.Frame) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	cons := c.sub
-	if cons == nil {
+	cons, in := b.inflightFor(c, f)
+	if in == nil {
 		return
 	}
-	in := cons.q.inflight[id]
-	if in == nil || in.cons != cons {
-		return
-	}
+	reason := f.Reason
 	if reason == "" {
 		reason = "nack"
+	}
+	if f.Permanent {
+		b.removeInflight(cons.q, in)
+		b.deadLetterLocked(cons.q, in.e, reason, true)
+		b.dispatch(cons.q)
+		return
 	}
 	b.failLocked(cons.q, in, reason, false)
 }
 
 // dispatch hands pending messages to consumers with free capacity (mu held).
+// A message is not given back to a consumer that already failed it while
+// another consumer of the group could take it; it waits for that consumer
+// instead, and later messages may go first.
 func (b *Broker) dispatch(q *queue) {
-	for len(q.pending) > 0 {
-		cons := q.pickConsumer()
+	for i := 0; i < len(q.pending); {
+		e := q.pending[i]
+		cons := q.pickConsumer(e)
 		if cons == nil {
-			return
+			if q.pickConsumer(nil) == nil {
+				return // nobody has free capacity
+			}
+			i++ // only consumers that failed this message are free: try the next one
+			continue
 		}
-		e := q.pending[0]
-		q.pending = q.pending[1:]
+		q.pending = append(q.pending[:i:i], q.pending[i+1:]...)
 		e.attempts++
-		q.inflight[e.msg.ID] = &inflightMsg{e: e, cons: cons, deadline: time.Now().Add(b.cfg.AckTimeout)}
+		b.tag++
+		q.inflight[b.tag] = &inflightMsg{tag: b.tag, e: e, cons: cons, deadline: time.Now().Add(b.cfg.AckTimeout)}
 		cons.inflight++
-		b.log.Info("message delivered", "queue", q.name, "message_id", e.msg.ID, "correlation_id", e.msg.CorrelationID, "consumer", cons.name, "attempt", e.attempts)
+		b.log.Info("message delivered", "queue", q.name, "message_id", e.msg.ID, "correlation_id", e.msg.CorrelationID, "consumer", cons.name, "attempt", e.attempts, "tag", b.tag)
 		msg := e.msg
-		cons.c.send(protocol.Frame{Type: protocol.FrameDeliver, Topic: q.topic, Message: &msg, Attempt: e.attempts, Redelivered: e.attempts > 1})
+		cons.c.send(protocol.Frame{Type: protocol.FrameDeliver, Topic: q.topic, Tag: b.tag, Message: &msg, Attempt: e.attempts, Redelivered: e.attempts > 1})
 	}
 }
 
-// pickConsumer returns the next consumer (round-robin) with free prefetch capacity.
-func (q *queue) pickConsumer() *consumer {
+// pickConsumer returns the next consumer (round-robin) with free prefetch
+// capacity. For an entry that already failed, consumers that failed it are
+// skipped, unless every consumer of the group has failed it (then retrying
+// on one of them is the only option).
+func (q *queue) pickConsumer(e *entry) *consumer {
+	avoid := e != nil && len(e.failedBy) > 0 && !q.allFailed(e)
 	n := len(q.consumers)
 	for i := 0; i < n; i++ {
 		cons := q.consumers[(q.rr+i)%n]
-		if cons.inflight < cons.prefetch {
-			q.rr = (q.rr + i + 1) % n
-			return cons
+		if cons.inflight >= cons.prefetch || (avoid && e.failedBy[cons]) {
+			continue
 		}
+		q.rr = (q.rr + i + 1) % n
+		return cons
 	}
 	return nil
+}
+
+func (q *queue) allFailed(e *entry) bool {
+	for _, cons := range q.consumers {
+		if !e.failedBy[cons] {
+			return false
+		}
+	}
+	return true
+}
+
+func (b *Broker) removeInflight(q *queue, in *inflightMsg) {
+	delete(q.inflight, in.tag)
+	if in.cons.inflight > 0 {
+		in.cons.inflight--
+	}
+}
+
+// deadLetterLocked moves an entry to the DLQ (mu held).
+func (b *Broker) deadLetterLocked(q *queue, e *entry, reason string, permanent bool) {
+	if err := b.st.append(record{Op: opDLQ, Queue: q.name, ID: e.msg.ID, Msg: &e.msg, Reason: reason, Attempts: e.attempts, Permanent: permanent}); err != nil {
+		b.log.Error("could not persist dlq record", "message_id", e.msg.ID, "error", err)
+	}
+	q.dlq = append(q.dlq, DLQEntry{Message: e.msg, Reason: reason, Attempts: e.attempts, Permanent: permanent, At: time.Now().UTC()})
+	b.log.Warn("message moved to DLQ", "queue", q.name, "message_id", e.msg.ID, "correlation_id", e.msg.CorrelationID, "attempts", e.attempts, "permanent", permanent, "reason", reason)
 }
 
 // failLocked handles a failed delivery: retry (with backoff, or immediately
 // when immediate is true) or dead-letter after MaxAttempts (mu held).
 func (b *Broker) failLocked(q *queue, in *inflightMsg, reason string, immediate bool) {
-	delete(q.inflight, in.e.msg.ID)
-	if in.cons.inflight > 0 {
-		in.cons.inflight--
-	}
+	b.removeInflight(q, in)
 	e := in.e
+	if e.failedBy == nil {
+		e.failedBy = map[*consumer]bool{}
+	}
+	e.failedBy[in.cons] = true
 	if e.attempts >= b.cfg.MaxAttempts {
-		if err := b.st.append(record{Op: opDLQ, Queue: q.name, ID: e.msg.ID, Msg: &e.msg, Reason: reason, Attempts: e.attempts}); err != nil {
-			b.log.Error("could not persist dlq record", "message_id", e.msg.ID, "error", err)
-		}
-		q.dlq = append(q.dlq, DLQEntry{Message: e.msg, Reason: reason, Attempts: e.attempts, At: time.Now().UTC()})
-		b.log.Warn("message moved to DLQ", "queue", q.name, "message_id", e.msg.ID, "correlation_id", e.msg.CorrelationID, "attempts", e.attempts, "reason", reason)
+		b.deadLetterLocked(q, e, reason, false)
 		b.dispatch(q)
 		return
 	}
@@ -537,15 +621,17 @@ func (b *Broker) Close() error {
 // ---------------------------------------------------------------- connection
 
 type conn struct {
-	nc   net.Conn
-	out  chan protocol.Frame
-	done chan struct{}
-	once sync.Once
-	sub  *consumer // guarded by Broker.mu
+	nc        net.Conn
+	out       chan protocol.Frame
+	done      chan struct{}
+	final     chan struct{} // closed by sendFinal: flush out, then close
+	once      sync.Once
+	finalOnce sync.Once
+	sub       *consumer // guarded by Broker.mu
 }
 
 func newConn(nc net.Conn) *conn {
-	return &conn{nc: nc, out: make(chan protocol.Frame, 1024), done: make(chan struct{})}
+	return &conn{nc: nc, out: make(chan protocol.Frame, 1024), done: make(chan struct{}), final: make(chan struct{})}
 }
 
 // send never blocks: a connection that cannot keep up is closed.
@@ -560,6 +646,12 @@ func (c *conn) send(f protocol.Frame) {
 	default:
 		c.close()
 	}
+}
+
+// sendFinal queues a last frame; the connection is closed once it is written.
+func (c *conn) sendFinal(f protocol.Frame) {
+	c.send(f)
+	c.finalOnce.Do(func() { close(c.final) })
 }
 
 func (c *conn) close() {
@@ -577,6 +669,19 @@ func (c *conn) writeLoop() {
 			if err := enc.Encode(f); err != nil {
 				c.close()
 				return
+			}
+		case <-c.final:
+			for {
+				select {
+				case f := <-c.out:
+					if enc.Encode(f) != nil {
+						c.close()
+						return
+					}
+				default:
+					c.close()
+					return
+				}
 			}
 		case <-c.done:
 			return

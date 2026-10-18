@@ -39,6 +39,22 @@ curl localhost:8081/stats
 
 Încărcare cu mai mulți publisheri concurenți: `go run ./src/order-service -load 100 -publishers 5`.
 
+## Versiune evaluată
+
+Versiunea evaluată este marcată în git cu tag-ul `lab1-v1.1`.
+
+| Tag | Ce conține |
+|---|---|
+| `lab1-v1.0` | prima predare |
+| `lab1-v1.1` | corecturile după evaluare (mai jos) |
+
+Corecturi în `lab1-v1.1`:
+
+1. Livrările in-flight sunt indexate după un `tag` unic per livrare, nu după `message.id`. Două publicări cu același id nu mai blochează consumatorul care a primit prima copie (`TestDuplicateMessageIDDoesNotBlockConsumer`, `TestDuplicateMessageIDSurvivesRestart`).
+2. Un mesaj retrimis nu mai este dat înapoi consumatorului care tocmai l-a eșuat, cât timp grupul are alt consumator; nu mai ajunge în DLQ dacă un alt consumator este sănătos (`TestRetryPrefersAnotherConsumer`).
+3. JSON invalid primește un frame `error` înainte de închiderea conexiunii (`TestInvalidJSONGetsErrorBeforeClose`).
+4. Erorile permanente (payload invalid, schemă necunoscută, regulă de business) merg direct în DLQ, fără retry (`TestPermanentErrorIsNotRetried`, `TestProcessorClassifiesPermanentErrors`).
+
 ## Mesajul
 
 Fiecare mesaj are `id`, `type`, `timestamp`, `correlation_id`, `schema_version` și `payload` (vezi `contracts/`). `correlation_id` vine din headerul `X-Correlation-ID` (sau se generează) și apare în logurile broker-ului, producer-ului și consumatorilor.
@@ -51,15 +67,15 @@ Fiecare mesaj are `id`, `type`, `timestamp`, `correlation_id`, `schema_version` 
 | 6 | Mai mulți publisheri și subscriberi concurent | fiecare conexiune are propriul goroutine; consumatori concurenți în grup (`-workers`), publisheri în `-load -publishers` | `TestManyPublishersManySubscribersConcurrently` |
 | 7 | Adăugare și eliminare dinamică, thread-safe | conectare și deconectare oricând; starea broker-ului este protejată de un mutex | `TestDynamicSubscribersAndPublishers` (rulat cu `-race`) |
 | 8 | Excepții: deconectări neașteptate | `dropConn` repune mesajele in-flight, `ack-timeout` pentru consumeri blocați, frame-uri rupte sau invalide nu afectează broker-ul | `tests/failure/*` |
-| 9 | Persistență, erori în broker, retransmitere | log append-only cu `fsync`, replay la pornire, retry cu backoff, DLQ persistentă | `TestPersistence*`, `TestRetryThenDeadLetter` |
+| 9 | Persistență, erori în broker, retransmitere | log append-only cu `fsync`, replay la pornire, retry cu backoff pe alt consumator, erori permanente direct în DLQ, DLQ persistentă | `TestPersistence*`, `TestRetryThenDeadLetter`, `TestRetryPrefersAnotherConsumer`, `TestPermanentErrorIsNotRetried` |
 
 Cerințe suplimentare ale laboratorului:
 
 | Cerință | Realizare |
 |---|---|
 | Minim doi consumatori | `inventory` și `billing` (grupuri diferite, fiecare primește toate mesajele) |
-| ACK/NACK | `client.Handler`: `nil` este ACK, eroare este NACK |
-| Retry limitat | `-max-attempts` (3), backoff exponențial |
+| ACK/NACK | `client.Handler`: `nil` este ACK, eroare este NACK, `client.Permanent(err)` este NACK fără retry. ACK/NACK identifică livrarea prin `tag` |
+| Retry limitat | `-max-attempts` (3), backoff exponențial, doar pentru erori tranzitorii |
 | Deduplicare | consumer idempotent pe `message.id` (`common.EffectStore`), vezi ADR 0002 |
 | Ordering declarat | `docs/delivery-guarantees.md` |
 | Dead-letter queue | `GET /dlq?queue=orders.billing` |
@@ -72,10 +88,12 @@ Cerințe suplimentare ale laboratorului:
 
 ```
 tests/unit         envelope, validare, backoff, EffectStore
-tests/integration  flux complet, două grupuri, concurență, dinamic, retry, DLQ, persistență, API HTTP
+tests/integration  flux complet, două grupuri, concurență, dinamic, retry, DLQ, persistență, API HTTP,
+                   id duplicat, retry pe alt consumator, erori permanente
 tests/contract     mesajul serializat respectă schemele din contracts/, formatul frame-urilor
 tests/failure      crash după efect înainte de ACK (cu și fără dedup), at-most-once, consumer
-                   deconectat, ack timeout, publisher cu frame rupt sau garbage
+                   deconectat, ack timeout, publisher cu frame rupt sau garbage, JSON invalid
+                   primește error înainte de închidere
 ```
 
 ## Documentație

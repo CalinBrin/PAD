@@ -18,6 +18,28 @@ import (
 // subscriber drops the connection without sending ACK or NACK.
 var ErrCrash = errors.New("simulated crash before ack")
 
+// PermanentError marks a failure that retrying cannot fix (invalid payload,
+// unsupported schema, business rule violation). The subscriber sends a NACK
+// with permanent=true and the broker moves the message to the DLQ at once.
+type PermanentError struct{ Err error }
+
+func (e *PermanentError) Error() string { return e.Err.Error() }
+func (e *PermanentError) Unwrap() error { return e.Err }
+
+// Permanent wraps err as a non-retryable failure (nil stays nil).
+func Permanent(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &PermanentError{Err: err}
+}
+
+// IsPermanent reports whether err (or an error it wraps) is permanent.
+func IsPermanent(err error) bool {
+	var p *PermanentError
+	return errors.As(err, &p)
+}
+
 // ---------------------------------------------------------------- Publisher
 
 // Publisher publishes messages over one connection and waits for the broker
@@ -72,7 +94,9 @@ type Delivery struct {
 	Redelivered bool
 }
 
-// Handler returns nil to ACK, an error to NACK, or ErrCrash to simulate a crash.
+// Handler returns nil to ACK, an error to NACK (retried by the broker), an
+// error wrapped with Permanent to NACK without retry (straight to the DLQ),
+// or ErrCrash to simulate a crash.
 type Handler func(Delivery) error
 
 type SubscribeOptions struct {
@@ -142,9 +166,9 @@ func (s *Subscriber) run() {
 
 // handle returns false when the subscriber must stop.
 func (s *Subscriber) handle(f protocol.Frame) bool {
-	id := f.Message.ID
+	id, tag := f.Message.ID, f.Tag
 	if s.opt.AckBeforeProcess {
-		if s.enc.Encode(protocol.Frame{Type: protocol.FrameAck, ID: id}) != nil {
+		if s.enc.Encode(protocol.Frame{Type: protocol.FrameAck, ID: id, Tag: tag}) != nil {
 			return false
 		}
 	}
@@ -158,9 +182,9 @@ func (s *Subscriber) handle(f protocol.Frame) bool {
 	case s.opt.AckBeforeProcess:
 		return true
 	case err == nil:
-		return s.enc.Encode(protocol.Frame{Type: protocol.FrameAck, ID: id}) == nil
+		return s.enc.Encode(protocol.Frame{Type: protocol.FrameAck, ID: id, Tag: tag}) == nil
 	default:
-		return s.enc.Encode(protocol.Frame{Type: protocol.FrameNack, ID: id, Reason: err.Error()}) == nil
+		return s.enc.Encode(protocol.Frame{Type: protocol.FrameNack, ID: id, Tag: tag, Reason: err.Error(), Permanent: IsPermanent(err)}) == nil
 	}
 }
 

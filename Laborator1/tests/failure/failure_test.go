@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -228,10 +229,16 @@ func TestPublisherDisconnectsUnexpectedly_BrokerKeepsWorking(t *testing.T) {
 	c1, _ := net.Dial("tcp", b.Addr())
 	c1.Write([]byte(`{"type":"publish","topic":"orders","message":{"id":"x"`))
 	c1.Close()
-	// 2) garbage
+	// 2) garbage: the broker answers with an error frame, then closes
 	c2, _ := net.Dial("tcp", b.Addr())
 	c2.Write([]byte("not json at all\n"))
+	c2.SetReadDeadline(time.Now().Add(time.Second))
+	var garbageReply protocol.Frame
+	json.NewDecoder(c2).Decode(&garbageReply)
 	c2.Close()
+	if garbageReply.Type != protocol.FrameError {
+		t.Fatalf("garbage must get an error frame, got %+v", garbageReply)
+	}
 	// 3) a complete but invalid message (no correlation id) gets an error frame, not a crash
 	c3, _ := net.Dial("tcp", b.Addr())
 	json.NewEncoder(c3).Encode(protocol.Frame{Type: protocol.FramePublish, Topic: "orders", Message: &protocol.Message{ID: "bad"}})
@@ -263,4 +270,51 @@ func TestPublisherDisconnectsAfterConfirm_MessageStillDelivered(t *testing.T) {
 	})
 	defer s.Close()
 	testutil.WaitFor(t, 2*time.Second, "delivery", func() bool { return rec.Count(m.ID) == 1 })
+}
+
+// Fix 3: invalid JSON gets an error frame before the broker closes the connection.
+func TestInvalidJSONGetsErrorBeforeClose(t *testing.T) {
+	b := testutil.StartBroker(t, testutil.FastConfig(t.TempDir()))
+	c, err := net.Dial("tcp", b.Addr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	c.Write([]byte("{this is not json}\n"))
+	c.SetReadDeadline(time.Now().Add(2 * time.Second))
+	dec := json.NewDecoder(c)
+	var reply protocol.Frame
+	if err := dec.Decode(&reply); err != nil {
+		t.Fatalf("expected an error frame before close, got %v", err)
+	}
+	if reply.Type != protocol.FrameError || !strings.Contains(reply.Reason, "invalid JSON") {
+		t.Fatalf("unexpected reply: %+v", reply)
+	}
+	var next protocol.Frame
+	if err := dec.Decode(&next); err == nil {
+		t.Fatalf("connection must be closed after the error, got %+v", next)
+	}
+}
+
+// Valid JSON with a wrong field type keeps the session open.
+func TestWrongFieldTypeGetsErrorAndSessionContinues(t *testing.T) {
+	b := testutil.StartBroker(t, testutil.FastConfig(t.TempDir()))
+	c, err := net.Dial("tcp", b.Addr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	c.Write([]byte(`{"type":"publish","topic":7}` + "\n"))
+	c.SetReadDeadline(time.Now().Add(2 * time.Second))
+	dec := json.NewDecoder(c)
+	var reply protocol.Frame
+	if err := dec.Decode(&reply); err != nil || reply.Type != protocol.FrameError {
+		t.Fatalf("expected an error frame, got %+v (%v)", reply, err)
+	}
+	b.Declare(protocol.TopicOrders, "inventory")
+	m, _ := protocol.NewMessage(protocol.TypeOrderCreated, "corr-type", protocol.OrderCreated{OrderID: "o", CustomerID: "c", Amount: 1})
+	json.NewEncoder(c).Encode(protocol.Frame{Type: protocol.FramePublish, Topic: protocol.TopicOrders, Message: &m})
+	if err := dec.Decode(&reply); err != nil || reply.Type != protocol.FramePubAck {
+		t.Fatalf("session must continue after a type error, got %+v (%v)", reply, err)
+	}
 }

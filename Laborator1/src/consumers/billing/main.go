@@ -1,6 +1,6 @@
 // Command billing is the second consumer: it "creates an invoice" for each
-// order. It rejects orders with a non-positive amount; such a message fails
-// on every attempt and ends in the dead-letter queue.
+// order. It rejects orders with a non-positive amount; this is a permanent
+// error, so the message goes to the dead-letter queue without retries.
 package main
 
 import (

@@ -34,24 +34,26 @@ const (
 )
 
 type record struct {
-	Op       string            `json:"op"`
-	Topic    string            `json:"topic,omitempty"`
-	Group    string            `json:"group,omitempty"`
-	Queue    string            `json:"queue,omitempty"`
-	Queues   []string          `json:"queues,omitempty"`
-	ID       string            `json:"id,omitempty"`
-	Msg      *protocol.Message `json:"msg,omitempty"`
-	Reason   string            `json:"reason,omitempty"`
-	Attempts int               `json:"attempts,omitempty"`
-	At       time.Time         `json:"at"`
+	Op        string            `json:"op"`
+	Topic     string            `json:"topic,omitempty"`
+	Group     string            `json:"group,omitempty"`
+	Queue     string            `json:"queue,omitempty"`
+	Queues    []string          `json:"queues,omitempty"`
+	ID        string            `json:"id,omitempty"`
+	Msg       *protocol.Message `json:"msg,omitempty"`
+	Reason    string            `json:"reason,omitempty"`
+	Attempts  int               `json:"attempts,omitempty"`
+	Permanent bool              `json:"permanent,omitempty"`
+	At        time.Time         `json:"at"`
 }
 
 // DLQEntry is a dead-lettered message.
 type DLQEntry struct {
-	Message  protocol.Message `json:"message"`
-	Reason   string           `json:"reason"`
-	Attempts int              `json:"attempts"`
-	At       time.Time        `json:"at"`
+	Message   protocol.Message `json:"message"`
+	Reason    string           `json:"reason"`
+	Attempts  int              `json:"attempts"`
+	Permanent bool             `json:"permanent,omitempty"` // rejected by the consumer as not retryable
+	At        time.Time        `json:"at"`
 }
 
 type declared struct{ Name, Topic, Group string }
@@ -89,7 +91,7 @@ func (s *state) apply(r record) {
 	case opDLQ:
 		s.remove(r.Queue, r.ID)
 		if r.Msg != nil {
-			s.dlq[r.Queue] = append(s.dlq[r.Queue], DLQEntry{*r.Msg, r.Reason, r.Attempts, r.At})
+			s.dlq[r.Queue] = append(s.dlq[r.Queue], DLQEntry{Message: *r.Msg, Reason: r.Reason, Attempts: r.Attempts, Permanent: r.Permanent, At: r.At})
 		}
 	}
 }
@@ -177,7 +179,7 @@ func compact(path string, st *state) error {
 		}
 		for _, e := range st.dlq[d.Name] {
 			m := e.Message
-			_ = enc.Encode(record{Op: opDLQ, Queue: d.Name, ID: m.ID, Msg: &m, Reason: e.Reason, Attempts: e.Attempts, At: e.At})
+			_ = enc.Encode(record{Op: opDLQ, Queue: d.Name, ID: m.ID, Msg: &m, Reason: e.Reason, Attempts: e.Attempts, Permanent: e.Permanent, At: e.At})
 		}
 	}
 	if err := w.Flush(); err != nil {

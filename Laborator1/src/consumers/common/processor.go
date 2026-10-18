@@ -128,17 +128,19 @@ func (p *Processor) Handle(d client.Delivery) error {
 
 	if m.Type != protocol.TypeOrderCreated || m.SchemaVersion != protocol.SchemaVersion {
 		log.Error("unsupported message", "type", m.Type, "schema_version", m.SchemaVersion)
-		return errors.New("unsupported message type or schema version")
+		return client.Permanent(errors.New("unsupported message type or schema version"))
 	}
+	// Errors about the message itself are permanent: a retry would fail the
+	// same way, so the message goes to the DLQ at once.
 	var oc protocol.OrderCreated
 	if err := json.Unmarshal(m.Payload, &oc); err != nil {
 		log.Error("invalid payload", "error", err)
-		return err
+		return client.Permanent(err)
 	}
 	if p.Validate != nil {
 		if err := p.Validate(oc); err != nil {
-			log.Warn("business validation failed", "order_id", oc.OrderID, "error", err)
-			return err
+			log.Warn("business validation failed, permanent error", "order_id", oc.OrderID, "error", err)
+			return client.Permanent(err)
 		}
 	}
 	if p.Dedup && p.Store.Has(m.ID) {
@@ -153,8 +155,8 @@ func (p *Processor) Handle(d client.Delivery) error {
 		time.Sleep(p.Delay)
 	}
 	if err := p.Store.Apply(Effect{MessageID: m.ID, CorrelationID: m.CorrelationID, Consumer: p.Consumer, Action: p.Action, OrderID: oc.OrderID, Amount: oc.Amount, At: time.Now().UTC()}); err != nil {
-		log.Error("could not apply effect", "error", err)
-		return err
+		log.Error("could not apply effect, will be retried", "error", err)
+		return err // transient (disk, I/O): retried by the broker
 	}
 	log.Info("local effect applied", "action", p.Action, "order_id", oc.OrderID)
 	if p.crash(StageAfterEffect, d) {

@@ -25,9 +25,11 @@ Câmpurile din `/stats`: `pending` (în așteptare), `inflight` (livrate, fără
 
 **Un consumer a murit.** Nu este nevoie de nicio acțiune în broker: mesajele lui in-flight revin singure în coadă (`consumer disconnected before ack` în log). Repornește consumer-ul. Efectele deja aplicate sunt recunoscute prin deduplicare.
 
-**Mesaje în DLQ.** Sunt mesaje care au eșuat de `max-attempts` ori. Citește `reason` din `/dlq`, corectează cauza (cod sau date), apoi republică mesajul corectat cu un `POST /orders` nou. Nu există replay automat din DLQ.
+**Mesaje în DLQ.** Sunt mesaje respinse ca permanente (`permanent: true`, `attempts: 1`: date invalide, nu are rost retry) sau care au eșuat de `max-attempts` ori cu erori tranzitorii. Citește `reason` din `/dlq`, corectează cauza (cod sau date), apoi republică mesajul corectat cu un `POST /orders` nou. Nu există replay automat din DLQ.
 
 **Broker-ul a căzut.** `POST /orders` răspunde `503` (producer-ul încearcă o singură reconectare). La repornire, broker-ul reîncarcă din `broker.log` toate mesajele neconfirmate. Datele sunt în directorul `-data` (volumul `broker-data` în compose), nu îl șterge.
+
+**Un client primește `error` cu `invalid JSON` și conexiunea se închide.** Clientul a trimis un frame care nu este JSON. Broker-ul răspunde cu motivul, apoi închide conexiunea (fluxul nu mai poate fi citit). Corectează clientul. Broker-ul și ceilalți clienți nu sunt afectați.
 
 **`broker.log` pare corupt.** Liniile ilizibile sunt ignorate cu un avertisment `ignoring unreadable log record`. Dacă lipsesc mesaje, verifică acest avertisment la pornire.
 
@@ -35,7 +37,7 @@ Câmpurile din `/stats`: `pending` (în așteptare), `inflight` (livrate, fără
 
 | Flag | Implicit | Efect |
 |---|---|---|
-| `-max-attempts` | 3 | livrări înainte de DLQ |
+| `-max-attempts` | 3 | livrări înainte de DLQ, pentru erori tranzitorii (cele permanente merg direct în DLQ) |
 | `-ack-timeout` | 10s | timp până la redelivery pentru mesaj fără ack |
 | `-retry-base` | 500ms | backoff: 1x, 2x, 4x (maxim 30s) |
 | consumer `-workers` | 2 | abonați concurenți în proces |
