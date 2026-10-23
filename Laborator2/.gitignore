@@ -1,0 +1,8 @@
+# generated from contracts/proto by scripts/gen.sh (also done by the Dockerfile)
+/gen/
+# local configuration with secrets (copy .env.example to .env)
+.env
+# runtime data, logs and binaries
+/data/
+/logs/
+/bin/

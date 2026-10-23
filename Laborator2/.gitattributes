@@ -1,0 +1,8 @@
+# Scripts and sources run inside Linux containers: keep LF line endings even
+# when git converts line endings on Windows (core.autocrlf=true).
+* text=auto
+*.sh text eol=lf
+*.go text eol=lf
+*.proto text eol=lf
+*.yml text eol=lf
+Dockerfile text eol=lf

@@ -1,0 +1,45 @@
+// Contract of the external payment service, version 1.
+syntax = "proto3";
+
+package payment.v1;
+
+option go_package = "pad-lab2/gen/payment/v1;paymentv1";
+
+service Payment {
+  // Charge executes a payment at most once per idempotency_key.
+  // The same key with the same parameters returns the original result
+  // (replayed = true). The same key with different parameters is
+  // FAILED_PRECONDITION. A charge whose answer was lost can be repeated
+  // safely or looked up with GetCharge.
+  rpc Charge(ChargeRequest) returns (ChargeResponse);
+
+  // GetCharge returns the result of an executed charge, or NOT_FOUND if no
+  // charge was executed for the key. It never changes state.
+  rpc GetCharge(GetChargeRequest) returns (ChargeResponse);
+}
+
+message ChargeRequest {
+  string idempotency_key = 1;
+  string order_id = 2;
+  int64 amount_cents = 3;
+  string currency = 4;
+}
+
+message GetChargeRequest {
+  string idempotency_key = 1;
+}
+
+enum ChargeStatus {
+  CHARGE_STATUS_UNSPECIFIED = 0;
+  CHARGE_STATUS_APPROVED = 1;
+  // Business outcome (e.g. over the limit), not an error.
+  CHARGE_STATUS_DECLINED = 2;
+}
+
+message ChargeResponse {
+  string charge_id = 1;
+  ChargeStatus status = 2;
+  // true: the charge was executed by an earlier call with the same key.
+  bool replayed = 3;
+  string decline_reason = 4;
+}

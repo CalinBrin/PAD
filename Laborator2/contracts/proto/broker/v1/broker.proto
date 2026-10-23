@@ -1,0 +1,104 @@
+// Broker contract, version 1.
+//
+// Compatibility rules (see contracts/versioning.md):
+//   - field numbers and types never change; removed fields are `reserved`
+//   - new optional fields may be added in v1 (old clients ignore them)
+//   - any incompatible change goes to a new package: broker.v2
+// Error semantics are part of the contract (see contracts/errors.md).
+syntax = "proto3";
+
+package broker.v1;
+
+option go_package = "pad-lab2/gen/broker/v1;brokerv1";
+
+// Envelope is the message carried by the broker.
+message Envelope {
+  // Stable identifier. It is also the idempotency key of Publish.
+  string message_id = 1;
+  // Propagated through every RPC, message and log line of one request.
+  string correlation_id = 2;
+  // Fully qualified payload type, e.g. "orders.v1.OrderCreated".
+  string message_type = 3;
+  // Version of the payload schema of message_type (>= 1).
+  int32 schema_version = 4;
+  // RFC 3339 timestamp in UTC ("Z" suffix), e.g. "2026-10-23T17:00:00.123Z".
+  string occurred_at = 5;
+  // Protobuf encoding of message_type.
+  bytes payload = 6;
+}
+
+service Broker {
+  // Publish stores the message durably (fsync) in every queue bound to the
+  // topic, then answers. It is idempotent by message_id: repeating a publish
+  // whose first answer was lost returns duplicate = true and enqueues nothing.
+  rpc Publish(PublishRequest) returns (PublishResponse);
+
+  // Consume opens a delivery session for a consumer group. The first client
+  // message must be `subscribe`; afterwards the client sends ack / nack for
+  // the deliveries it receives. Closing the stream returns unacknowledged
+  // deliveries to the queue.
+  rpc Consume(stream ConsumeRequest) returns (stream ConsumeResponse);
+}
+
+message PublishRequest {
+  string topic = 1;
+  Envelope message = 2;
+}
+
+message PublishResponse {
+  string message_id = 1;
+  // Number of queues (consumer groups) that hold a copy.
+  int32 routed_queues = 2;
+  // true: this message_id was already stored durably by an earlier publish;
+  // nothing new was enqueued. Never true for a message that was not stored.
+  bool duplicate = 3;
+}
+
+message ConsumeRequest {
+  oneof request {
+    Subscribe subscribe = 1;
+    Ack ack = 2;
+    Nack nack = 3;
+  }
+}
+
+message Subscribe {
+  string topic = 1;
+  // Durable identity of the consumer: the queue is "topic.group". It does not
+  // depend on the process, so a restarted consumer gets the same deliveries.
+  string group = 2;
+  // Instance name, only used in logs.
+  string consumer_name = 3;
+  // Maximum unacknowledged deliveries for this session (default 1).
+  int32 prefetch = 4;
+}
+
+message Ack {
+  uint64 delivery_tag = 1;
+}
+
+message Nack {
+  uint64 delivery_tag = 1;
+  string reason = 2;
+  // true: retrying cannot help, the message goes to the DLQ at once.
+  bool permanent = 3;
+}
+
+message ConsumeResponse {
+  oneof response {
+    Subscribed subscribed = 1;
+    Delivery delivery = 2;
+  }
+}
+
+message Subscribed {
+  string queue = 1;
+}
+
+message Delivery {
+  // Unique per delivery (a redelivery gets a new tag).
+  uint64 delivery_tag = 1;
+  Envelope message = 2;
+  int32 attempt = 3;
+  bool redelivered = 4;
+}

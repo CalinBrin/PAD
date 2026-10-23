@@ -1,0 +1,19 @@
+// Payload of message_type "orders.v1.OrderCreated".
+//
+// schema_version 1: order_id, customer_id, amount_cents
+// schema_version 2: adds currency (compatible: a v1 reader ignores it, a v2
+//                   reader treats a missing currency as "MDL")
+syntax = "proto3";
+
+package orders.v1;
+
+option go_package = "pad-lab2/gen/orders/v1;ordersv1";
+
+message OrderCreated {
+  string order_id = 1;
+  string customer_id = 2;
+  // Amount in the smallest currency unit (no floating point money).
+  int64 amount_cents = 3;
+  // ISO 4217 code, schema_version >= 2.
+  string currency = 4;
+}

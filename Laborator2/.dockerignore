@@ -1,0 +1,7 @@
+.git
+.env
+gen
+data
+logs
+bin
+*.zip
