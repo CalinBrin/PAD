@@ -93,45 +93,6 @@ go test -race ./...
 | Fallback | outbox pentru comenzi când brokerul nu răspunde; `nack` și relivrare când plata nu răspunde | `order-service/service`, `consumers/billing/billing` |
 | Scenariul critic | răspuns pierdut după commit, la plată și la publicare: reconciliere cu `GetCharge` și deduplicare | `docs/failure-scenarios.md` 1 și 2 |
 
-## Baremul (laboratorul 1, păstrat)
-
-| Nota | Cerință | Test |
-|---|---|---|
-| 5 | un publisher, un subscriber | `TestOnePublisherOneSubscriber` |
-| 6 | mai mulți publisheri și subscriberi concurent | `TestManyPublishersManySubscribersConcurrently` |
-| 7 | adăugare și eliminare dinamică, thread-safe | `TestDynamicSubscribersAndPublishers` (cu `-race`) |
-| 8 | excepții: deconectări, timeout, mesaje invalide | `tests/failure`, `TestPublishErrorSemantics` |
-| 9 | persistență, erori în broker, retransmitere | `TestPersistence*`, `TestStoreWriteFailure_*`, `TestRetryThenDeadLetter` |
-| | load balancing între consumatorii unui grup | `TestLoadBalancingAcrossConsumersOfAGroup` (20/20/20) |
-
-## Invariantele cerute
-
-| Invariant | Cum se respectă |
-|---|---|
-| fiecare solicitare are un identificator stabil | `Idempotency-Key` obligatoriu; `order_id` și `message_id` derivate din el |
-| fiecare mesaj are id și versiune de schemă | `Envelope.message_id`, `schema_version`, validate de broker |
-| aceeași solicitare nu produce același efect de mai multe ori | deduplicare la API, la broker, la inventory și la plată |
-| un mesaj neprocesabil nu se repetă la infinit | DLQ: imediat pentru erori permanente, după `max-attempts` pentru tranzitorii |
-| un apel la distanță are deadline explicit | `PerAttemptTimeout` pe fiecare apel gRPC |
-| retry numai când politica și semantica îl permit | `rpcx.Retryable` + operații idempotente |
-| același correlation ID în toate componentele | HTTP header, metadata gRPC, `Envelope`, loguri; verificat în `TestEndToEndOrderFlowKeepsCorrelationID` |
-| configurația și secretele nu sunt în cod | variabile de mediu, `.env.example`, `.env` ignorat de git |
-| pornire și verificare reproductibile | `docker compose up --build -d`, `docker compose run --rm tests` |
-
-## Feedback-ul pentru altă echipă: cum este evitat aici
-
-| Problema semnalată | Aici |
-|---|---|
-| Receiverul primește un id nou la fiecare pornire, livrările lui rămân blocate după crash | livrările aparțin cozii grupului (`topic.group`), nu procesului; la închiderea fluxului revin în coadă; un proces nou cu alt nume le primește (`TestCrashAfterEffectBeforeAck_*`) |
-| Mesaj pierdut fără eroare: ACK cu `duplicate=true` deși nu s-a salvat | `duplicate=true` doar dacă `message_id` este în log; o scriere eșuată dă `UNAVAILABLE` (`TestStoreWriteFailure_IsReportedAndRetrySucceeds`) |
-| Mesaje publicate fără abonat conectat se pierd | cozi durabile declarate; mesajul așteaptă consumatorul; topicul fără coadă este refuzat explicit (`TestMessagePublishedWithoutConnectedConsumerIsDeliveredLater`, `TestPublishToTopicWithoutQueueIsRefused`) |
-| Consumatorul lent primește duplicate | efectul rămâne unic: verificare și scriere atomice (`ApplyOnce`), cheia de plată pentru billing (`TestAckTimeoutDuplicateIsAbsorbedByDeduplication`, `TestTwoBillingReplicasChargeTheSameOrderOnce`) |
-| Polling la 500 ms | livrare push pe fluxul gRPC, imediat ce un consumator are capacitate |
-| Lipsește load balancing | consumatori concurenți round-robin cu prefetch, 2 replici billing în compose |
-| Lipsesc diagrama și dovezile scenariilor | `docs/diagrams/`, `docs/failure-scenarios.md`, `docs/evidence/` |
-| Niciun test nu pornește serverul gRPC | `tests/testutil` pornește brokerul și serviciul de plăți pe porturi TCP reale |
-| Lipsește tag-ul | `lab2-v1.0` |
-
 ## Livrabile
 
 | Livrabil | Unde |
