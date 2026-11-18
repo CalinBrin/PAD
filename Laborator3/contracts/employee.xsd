@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Reprezentarea XML a angajatului, a paginii, a feed-ului și a erorii. -->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" elementFormDefault="qualified">
+
+  <xs:simpleType name="employeeId">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[A-Za-z0-9_\-]{1,64}"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:complexType name="employeeType">
+    <xs:all>
+      <xs:element name="name" type="xs:string" minOccurs="0"/>
+      <xs:element name="department" type="xs:string" minOccurs="0"/>
+      <xs:element name="position" type="xs:string" minOccurs="0"/>
+      <xs:element name="email" type="xs:string" minOccurs="0"/>
+      <xs:element name="salary" type="xs:nonNegativeInteger" minOccurs="0"/>
+      <!-- scrise de DW -->
+      <xs:element name="version" type="xs:nonNegativeInteger" minOccurs="0"/>
+      <xs:element name="updated_at" type="xs:dateTime" minOccurs="0"/>
+      <xs:element name="updated_by" type="xs:string" minOccurs="0"/>
+    </xs:all>
+    <!-- obligatoriu în răspunsuri și la PUT /employee/; la PUT /employees/{id} poate lipsi -->
+    <xs:attribute name="id" type="employeeId" use="optional"/>
+  </xs:complexType>
+
+  <xs:element name="employee" type="employeeType"/>
+
+  <xs:element name="employees">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="employee" type="employeeType" minOccurs="0" maxOccurs="unbounded"/>
+      </xs:sequence>
+      <xs:attribute name="offset" type="xs:nonNegativeInteger" use="required"/>
+      <xs:attribute name="limit" type="xs:positiveInteger" use="required"/>
+      <xs:attribute name="total" type="xs:nonNegativeInteger" use="required"/>
+    </xs:complexType>
+  </xs:element>
+
+  <xs:element name="updates">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="employee" type="employeeType" minOccurs="0" maxOccurs="unbounded"/>
+      </xs:sequence>
+      <xs:attribute name="cursor" type="xs:string" use="required"/>
+    </xs:complexType>
+  </xs:element>
+
+  <xs:element name="error">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="code" type="xs:string"/>
+        <xs:element name="message" type="xs:string"/>
+        <xs:element name="correlation_id" type="xs:string" minOccurs="0"/>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+</xs:schema>
