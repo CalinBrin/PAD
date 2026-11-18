@@ -1,0 +1,7 @@
+# local configuration (copy .env.example to .env)
+.env
+# runtime data, logs and binaries
+/data/
+/logs/
+/bin/
+.DS_Store
