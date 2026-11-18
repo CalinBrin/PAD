@@ -22,6 +22,7 @@ import (
 
 	"pad-lab3/src/common/httpx"
 	"pad-lab3/src/common/logx"
+	"pad-lab3/src/common/model"
 	"pad-lab3/src/proxy/balancer"
 	"pad-lab3/src/proxy/cache"
 )
@@ -202,79 +203,122 @@ func (p *Proxy) serveCached(ctx context.Context, w http.ResponseWriter, r *http.
 		p.Stats.Bypass.Add(1)
 		return p.writeResult(w, r, p.forward(ctx, r, body), "BYPASS")
 	}
-	// The generation is read BEFORE the upstream request: if a write happens
-	// meanwhile, this answer is stored under a generation nobody reads.
-	gen, err := p.cache.Generation(ctx, ns)
+	key := cacheKey(ns, r, f)
+	// The entry and its generation counters are read in one round trip,
+	// BEFORE the upstream request: if a write happens meanwhile, the answer
+	// is stored with counters that are already old, so it is never served.
+	e, gens, err := p.cache.Lookup(ctx, key, dependencies(ns, r))
 	if err != nil {
 		p.Stats.Bypass.Add(1)
 		return p.writeResult(w, r, p.forward(ctx, r, body), "BYPASS")
 	}
-	key := cacheKey(ns, gen, r, f)
-	if !noCache {
-		if e, found, err := p.cache.Get(ctx, key); err == nil && found {
-			p.Stats.Hits.Add(1)
-			return p.writeEntry(w, r, e)
-		}
+	if e != nil && !noCache {
+		p.Stats.Hits.Add(1)
+		return p.writeEntry(w, r, *e)
 	}
 	p.Stats.Misses.Add(1)
 	res := p.forward(ctx, r, body)
 	if res.err == nil && res.status == http.StatusOK {
 		if ttl := p.ttl(res.header); ttl > 0 {
-			e := cache.Entry{Status: res.status, Header: keepHeaders(res.header), Body: res.body,
-				StoredAt: time.Now().UTC(), Gen: gen}
+			ne := cache.Entry{Status: res.status, Header: keepHeaders(res.header), Body: res.body,
+				StoredAt: time.Now().UTC(), Gens: gens}
 			sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 300*time.Millisecond)
-			_ = p.cache.Set(sctx, key, e, ttl)
+			_ = p.cache.Store(sctx, key, ne, ttl)
 			cancel()
 		}
 	}
 	return p.writeResult(w, r, res, "MISS")
 }
 
-// serveWrite forwards a PUT/POST/DELETE and invalidates the namespace:
+// serveWrite forwards a PUT/POST/DELETE and invalidates what it touches:
 // before forwarding, after it (whatever the outcome: success, error or
 // timeout) and, if the outcome is unknown, once more after WriteGrace, when a
 // write still in flight in the warehouse has certainly finished.
 func (p *Proxy) serveWrite(ctx context.Context, w http.ResponseWriter, r *http.Request, body []byte, ns string) outcome {
+	keys := invalidations(ns, r, body)
 	if p.cache != nil {
-		p.bump(ctx, ns, "before_write", r)
+		p.bump(ctx, keys, "before_write", r)
 	}
 	res := p.forward(ctx, r, body)
 	if p.cache != nil {
-		p.bump(context.WithoutCancel(ctx), ns, "after_write", r)
+		p.bump(context.WithoutCancel(ctx), keys, "after_write", r)
 		if res.ambiguous() {
 			p.Stats.DelayedInvalidations.Add(1)
 			corr := logx.CorrelationID(ctx)
 			time.AfterFunc(p.cfg.WriteGrace, func() {
-				p.bump(logx.WithCorrelationID(context.Background(), corr), ns, "delayed_after_ambiguous_write", r)
+				p.bump(logx.WithCorrelationID(context.Background(), corr), keys, "delayed_after_ambiguous_write", r)
 			})
 		}
 	}
 	return p.writeResult(w, r, res, "INVALIDATE")
 }
 
-func (p *Proxy) bump(ctx context.Context, ns, reason string, r *http.Request) {
+func (p *Proxy) bump(ctx context.Context, keys []string, reason string, r *http.Request) {
 	ctx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
 	defer cancel()
-	g, err := p.cache.Bump(ctx, ns)
-	if err != nil {
+	if err := p.cache.Bump(ctx, keys...); err != nil {
 		p.Stats.InvalidationErr.Add(1)
-		p.log.Warn("cache invalidation failed, will be retried before the cache is used again",
-			"event", "invalidation_failed", "namespace", ns, "reason", reason, "error", err,
+		p.log.Warn("cache invalidation failed, will be written before the cache is used again",
+			"event", "invalidation_failed", "keys", keys, "reason", reason, "error", err,
 			"correlation_id", logx.CorrelationID(ctx))
 		return
 	}
 	p.Stats.Invalidations.Add(1)
-	p.log.Info("cache invalidated", "event", "cache_invalidated", "namespace", ns, "generation", g,
+	p.log.Info("cache invalidated", "event", "cache_invalidated", "keys", keys,
 		"reason", reason, "method", r.Method, "path", r.URL.Path, "correlation_id", logx.CorrelationID(ctx))
 }
 
-// cacheKey: namespace, generation, path, canonical query (sorted, without
-// format) and the negotiated format, so JSON and XML are separate entries
-// whatever the Accept spelling.
-func cacheKey(ns string, gen int64, r *http.Request, f httpx.Format) string {
+// itemID returns the employee a request is about ("" for lists, or when the
+// id is only in the body): /employees/{id}, /employee?id=, /employee/?id=.
+func itemID(r *http.Request) string {
+	if id, ok := strings.CutPrefix(r.URL.Path, "/employees/"); ok && id != "" && !strings.Contains(id, "/") {
+		return id
+	}
+	if r.URL.Path == "/employee" || r.URL.Path == "/employee/" {
+		return r.URL.Query().Get("id")
+	}
+	return ""
+}
+
+func genAll(ns string) string      { return "gen:" + ns + ":all" }
+func genLists(ns string) string    { return "gen:" + ns + ":lists" }
+func genItem(ns, id string) string { return "gen:" + ns + ":item:" + id }
+
+// dependencies: the counters a cached GET depends on.
+func dependencies(ns string, r *http.Request) []string {
+	if id := itemID(r); id != "" {
+		return []string{genAll(ns), genItem(ns, id)}
+	}
+	return []string{genAll(ns), genLists(ns)}
+}
+
+// invalidations: the counters a write increments. A write to one employee
+// invalidates that employee and the list pages (which may contain it), not
+// the other employees. If the proxy cannot tell which employee (PUT /employee
+// with an unreadable body), everything is invalidated.
+func invalidations(ns string, r *http.Request, body []byte) []string {
+	id := itemID(r)
+	if id == "" && len(body) > 0 {
+		if f, err := httpx.FormatOfContentType(r.Header.Get("Content-Type")); err == nil {
+			var e model.Employee
+			if httpx.DecodeBytesLoose(f, body, &e) == nil && model.ValidID(e.ID) {
+				id = e.ID
+			}
+		}
+	}
+	if id == "" {
+		return []string{genAll(ns)}
+	}
+	return []string{genItem(ns, id), genLists(ns)}
+}
+
+// cacheKey: path, canonical query (sorted, without format) and the
+// negotiated format, so JSON and XML are separate entries whatever the
+// Accept spelling. The validity is given by the counters inside the entry.
+func cacheKey(ns string, r *http.Request, f httpx.Format) string {
 	q := r.URL.Query()
 	q.Del("format")
-	return fmt.Sprintf("%s:%d:GET:%s?%s:%s", ns, gen, r.URL.Path, q.Encode(), f)
+	return fmt.Sprintf("%s:GET:%s?%s:%s", ns, r.URL.Path, q.Encode(), f)
 }
 
 // ttl = min(CacheTTL, max-age of the answer); 0 when the answer forbids caching.

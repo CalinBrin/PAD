@@ -173,7 +173,7 @@ services:
   tools:
     image: pad-lab3-dev
     build: { context: ., dockerfile: deployment/Dockerfile, target: dev }
-    volumes: ["./docs/evidence:/src/docs/evidence"]
+    volumes: ["./docs/evidence:/src/docs/evidence", "go-build-cache:/root/.cache/go-build"]
     profiles: ["tools"]
 
 volumes:
@@ -181,3 +181,4 @@ volumes:
   redis-data:
   source-json-data:
   source-xml-data:
+  go-build-cache:

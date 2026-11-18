@@ -269,3 +269,30 @@ func TestConcurrentWritesThroughDifferentReplicasLoseNothing(t *testing.T) {
 		t.Fatalf("version %d after %d changes", e.Version, changed)
 	}
 }
+
+// A write invalidates the employee it touches and the lists, not the others.
+func TestWriteInvalidatesOnlyTheTouchedEmployee(t *testing.T) {
+	c := testutil.Start(t, testutil.Options{})
+	c.Seed(t, "a", 1)
+	c.Seed(t, "b", 1)
+	for _, p := range []string{"/employees/a", "/employees/b", "/employee?id=a", "/employees?limit=5"} {
+		c.Do(t, "GET", p, nil, nil)
+	}
+	c.Do(t, "PUT", "/employees/b", model.Employee{ID: "b", Name: "Emp b", Department: "IT", Salary: 2}, nil)
+	want := map[string]string{"/employees/a": "HIT", "/employee?id=a": "HIT", "/employees/b": "MISS", "/employees?limit=5": "MISS"}
+	for p, x := range want {
+		if got := c.Do(t, "GET", p, nil, nil).Header.Get("X-Cache"); got != x {
+			t.Errorf("%s after PUT b: %s, want %s", p, got, x)
+		}
+	}
+	// PUT /employee/ with the id only in the body (XML) still invalidates a
+	r := testutil.Raw(t, c.Server.URL, "PUT", "/employee/", `<employee id="a"><name>Nou</name></employee>`,
+		map[string]string{"Content-Type": "application/xml"})
+	if r.Status != 200 {
+		t.Fatalf("PUT /employee/: %d %s", r.Status, r.Body)
+	}
+	g := c.Do(t, "GET", "/employee?id=a", nil, nil)
+	if g.Header.Get("X-Cache") != "MISS" || testutil.Employee(t, g).Name != "Nou" {
+		t.Fatalf("alias entry not invalidated: %s %s", g.Header.Get("X-Cache"), g.Body)
+	}
+}

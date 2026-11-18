@@ -1,0 +1,93 @@
+{
+  "label": "06-down-cache-on",
+  "scenario": "dw-2 oprit (docker stop) la începutul rulării",
+  "started": "2026-11-18T20:52:44.885989375Z",
+  "duration_s": 20,
+  "concurrency": 16,
+  "ids": 50,
+  "write_ratio": 0.02,
+  "distribution": "zipf",
+  "format": "json",
+  "cache_enabled": true,
+  "algorithm": "round_robin",
+  "requests": 273949,
+  "ok": 273949,
+  "errors": 0,
+  "statuses": {
+    "200": 273949
+  },
+  "throughput_rps": 13696.1,
+  "latency_ms": {
+    "Mean": 1.17,
+    "P50": 0.88,
+    "P90": 2.4,
+    "P95": 3.15,
+    "P99": 4.49,
+    "Max": 106.77
+  },
+  "read_latency_ms": {
+    "Mean": 1.09,
+    "P50": 0.87,
+    "P90": 2.16,
+    "P95": 2.84,
+    "P99": 3.83,
+    "Max": 53.25
+  },
+  "x_cache": {
+    "HIT": 234652,
+    "INVALIDATE": 5570,
+    "MISS": 33727
+  },
+  "answered_by_backend": {
+    "dw-1": 19645,
+    "dw-3": 19652
+  },
+  "client_connections": {
+    "new": 16,
+    "reused": 273933
+  },
+  "proxy_delta": {
+    "upstream_requests": 39326,
+    "upstream_requests_per_client_request": 0.144,
+    "retries": 9,
+    "upstream_errors": 9,
+    "cache_hits": 234652,
+    "cache_misses": 33727,
+    "upstream_conns_new": 0,
+    "upstream_conns_reused": 39317,
+    "backend_served": {
+      "dw-1": 19658,
+      "dw-2": 9,
+      "dw-3": 19659
+    },
+    "backends_after": [
+      {
+        "name": "dw-1",
+        "url": "http://dw-1:8000",
+        "healthy": true,
+        "breaker": "closed",
+        "inflight": 0,
+        "served": 182971,
+        "failed": 0
+      },
+      {
+        "name": "dw-2",
+        "url": "http://dw-2:8000",
+        "healthy": false,
+        "breaker": "open",
+        "inflight": 0,
+        "served": 84639,
+        "failed": 9
+      },
+      {
+        "name": "dw-3",
+        "url": "http://dw-3:8000",
+        "healthy": true,
+        "breaker": "closed",
+        "inflight": 0,
+        "served": 183784,
+        "failed": 0
+      }
+    ]
+  }
+}

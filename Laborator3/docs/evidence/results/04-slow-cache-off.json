@@ -1,0 +1,93 @@
+{
+  "label": "04-slow-cache-off",
+  "scenario": "dw-2 lent (+200 ms)",
+  "started": "2026-11-18T20:52:03.624437551Z",
+  "duration_s": 20.18,
+  "concurrency": 16,
+  "ids": 50,
+  "write_ratio": 0.02,
+  "distribution": "zipf",
+  "format": "json",
+  "cache_enabled": false,
+  "algorithm": "round_robin",
+  "requests": 4689,
+  "ok": 4689,
+  "errors": 0,
+  "statuses": {
+    "200": 4689
+  },
+  "throughput_rps": 232.3,
+  "latency_ms": {
+    "Mean": 68.79,
+    "P50": 1.78,
+    "P90": 202.41,
+    "P95": 202.91,
+    "P99": 205.76,
+    "Max": 208.06
+  },
+  "read_latency_ms": {
+    "Mean": 68.84,
+    "P50": 1.76,
+    "P90": 202.38,
+    "P95": 202.82,
+    "P99": 205.76,
+    "Max": 208.06
+  },
+  "x_cache": {
+    "BYPASS": 4596,
+    "INVALIDATE": 93
+  },
+  "answered_by_backend": {
+    "dw-1": 1562,
+    "dw-2": 1568,
+    "dw-3": 1559
+  },
+  "client_connections": {
+    "new": 16,
+    "reused": 4673
+  },
+  "proxy_delta": {
+    "upstream_requests": 4709,
+    "upstream_requests_per_client_request": 1.004,
+    "retries": 0,
+    "upstream_errors": 0,
+    "cache_hits": 0,
+    "cache_misses": 0,
+    "upstream_conns_new": 0,
+    "upstream_conns_reused": 4709,
+    "backend_served": {
+      "dw-1": 1570,
+      "dw-2": 1570,
+      "dw-3": 1569
+    },
+    "backends_after": [
+      {
+        "name": "dw-1",
+        "url": "http://dw-1:8000",
+        "healthy": true,
+        "breaker": "closed",
+        "inflight": 0,
+        "served": 84042,
+        "failed": 0
+      },
+      {
+        "name": "dw-2",
+        "url": "http://dw-2:8000",
+        "healthy": true,
+        "breaker": "closed",
+        "inflight": 0,
+        "served": 84042,
+        "failed": 0
+      },
+      {
+        "name": "dw-3",
+        "url": "http://dw-3:8000",
+        "healthy": true,
+        "breaker": "closed",
+        "inflight": 0,
+        "served": 84041,
+        "failed": 0
+      }
+    ]
+  }
+}

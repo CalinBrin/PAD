@@ -301,3 +301,15 @@ func TestHealthCheckerFallAndRise(t *testing.T) {
 		t.Fatal("two successes must re-add it")
 	}
 }
+
+func TestRoundRobinSpreadsTheShareOfAMissingBackendEvenly(t *testing.T) {
+	p := pool(t, 3, balancer.RoundRobin)
+	p.Backends()[1].SetHealthy(false)
+	count := map[string]int{}
+	for i := 0; i < 1000; i++ {
+		count[p.Pick(nil).Name]++
+	}
+	if d := count["dw-1"] - count["dw-3"]; d > 10 || d < -10 {
+		t.Fatalf("uneven split without dw-2: %v", count)
+	}
+}

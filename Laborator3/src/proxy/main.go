@@ -42,25 +42,7 @@ func main() {
 		defer c.Close()
 		reg = proxy.NewRegistry(id, c.Client(), log)
 		go reg.Run(ctx)
-		// keeps the Redis fail-fast window short once Redis is back
-		go func() {
-			t := time.NewTicker(time.Second)
-			defer t.Stop()
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case <-t.C:
-					if !c.Available() {
-						pctx, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
-						if c.Ping(pctx) == nil {
-							log.Info("redis reachable again, cache back in use", "event", "redis_up")
-						}
-						cancel()
-					}
-				}
-			}
-		}()
+		c.OnUp = func() { log.Info("redis reachable again, cache back in use", "event", "redis_up") }
 	} else {
 		log.Warn("REDIS_ADDR not set: no cache, no shared client registry")
 		reg = proxy.NewRegistry(id, nil, log)

@@ -2,12 +2,15 @@
 package failure
 
 import (
+	"encoding/json"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"pad-lab3/src/datawarehouse/store"
+	"pad-lab3/src/proxy/cache"
 	"pad-lab3/src/proxy/proxy"
 	"pad-lab3/tests/testutil"
 )
@@ -46,18 +49,17 @@ func TestSlowGetStartedBeforePut_DoesNotCacheStaleValue(t *testing.T) {
 	if slowSalary != 100 {
 		t.Fatalf("the race did not happen: the slow GET read %d", slowSalary)
 	}
-	// the old answer was written to Redis, under an old generation
-	gen, _ := c.Redis.Get("gen:employees")
-	stale := false
-	for _, k := range c.Redis.Keys() {
-		if strings.HasPrefix(k, "cache:employees:") && strings.Contains(k, ":GET:/employees/a?") &&
-			!strings.HasPrefix(k, "cache:employees:"+gen+":") {
-			v, _ := c.Redis.Get(k)
-			stale = stale || strings.Contains(v, "eyJpZCI6ImEi") // base64 of {"id":"a"
-		}
+	// the old answer WAS written to Redis by the slow GET, but with the
+	// counters read before the PUT: they no longer match, so it is not served
+	raw, err := c.Redis.Get("cache:employees:GET:/employees/a?:json")
+	if err != nil {
+		t.Fatalf("the slow GET should have stored its answer: %v", err)
 	}
-	if !stale {
-		t.Fatalf("expected the stale answer under a generation older than %s, keys=%v", gen, c.Redis.Keys())
+	var e cache.Entry
+	_ = json.Unmarshal([]byte(raw), &e)
+	itemGen, _ := c.Redis.Get("gen:employees:item:a")
+	if !strings.Contains(string(e.Body), `"salary":100`) || fmt.Sprint(e.Gens[1]) == itemGen {
+		t.Fatalf("expected the stale answer with old counters %v (item counter now %s): %s", e.Gens, itemGen, e.Body)
 	}
 	for i := 0; i < 3; i++ {
 		if s, x := salaryOf(t, c, nil); s != 200 {

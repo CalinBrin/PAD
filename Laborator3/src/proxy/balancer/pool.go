@@ -128,14 +128,21 @@ func (p *Pool) Pick(exclude map[*Backend]bool) *Backend {
 		}
 		return nil
 	}
-	// round robin: the next available backend after the previous choice
-	start := p.next.Add(1) - 1
-	for i := 0; i < n; i++ {
-		b := p.backends[(int(start)+i)%n]
-		if exclude[b] || !b.Healthy() {
-			continue
+	// round robin over the backends available now: when one is out of
+	// rotation its share is spread over all the others, not given to its
+	// neighbour
+	avail := make([]*Backend, 0, n)
+	for _, b := range p.backends {
+		if !exclude[b] && b.Healthy() && b.Breaker.Available() {
+			avail = append(avail, b)
 		}
-		if b.Breaker.Acquire() {
+	}
+	if len(avail) == 0 {
+		return nil
+	}
+	start := int(p.next.Add(1) - 1)
+	for i := 0; i < len(avail); i++ {
+		if b := avail[(start+i)%len(avail)]; b.Breaker.Acquire() {
 			return b
 		}
 	}

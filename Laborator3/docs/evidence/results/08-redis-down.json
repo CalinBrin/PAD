@@ -1,0 +1,93 @@
+{
+  "label": "08-redis-down",
+  "scenario": "Redis oprit: proxy fără cache (degradat)",
+  "started": "2026-11-18T20:53:31.073563133Z",
+  "duration_s": 20,
+  "concurrency": 16,
+  "ids": 50,
+  "write_ratio": 0.02,
+  "distribution": "zipf",
+  "format": "json",
+  "cache_enabled": true,
+  "algorithm": "round_robin",
+  "requests": 257200,
+  "ok": 257200,
+  "errors": 0,
+  "statuses": {
+    "200": 257200
+  },
+  "throughput_rps": 12859.3,
+  "latency_ms": {
+    "Mean": 1.24,
+    "P50": 1.14,
+    "P90": 1.78,
+    "P95": 2.06,
+    "P99": 2.66,
+    "Max": 148.23
+  },
+  "read_latency_ms": {
+    "Mean": 1.21,
+    "P50": 1.14,
+    "P90": 1.71,
+    "P95": 1.95,
+    "P99": 2.47,
+    "Max": 148.23
+  },
+  "x_cache": {
+    "BYPASS": 251977,
+    "INVALIDATE": 5223
+  },
+  "answered_by_backend": {
+    "dw-1": 85729,
+    "dw-2": 85735,
+    "dw-3": 85736
+  },
+  "client_connections": {
+    "new": 16,
+    "reused": 257184
+  },
+  "proxy_delta": {
+    "upstream_requests": 257220,
+    "upstream_requests_per_client_request": 1,
+    "retries": 0,
+    "upstream_errors": 0,
+    "cache_hits": 0,
+    "cache_misses": 0,
+    "upstream_conns_new": 3,
+    "upstream_conns_reused": 257217,
+    "backend_served": {
+      "dw-1": 85740,
+      "dw-2": 85740,
+      "dw-3": 85740
+    },
+    "backends_after": [
+      {
+        "name": "dw-1",
+        "url": "http://dw-1:8000",
+        "healthy": true,
+        "breaker": "closed",
+        "inflight": 0,
+        "served": 371029,
+        "failed": 0
+      },
+      {
+        "name": "dw-2",
+        "url": "http://dw-2:8000",
+        "healthy": true,
+        "breaker": "closed",
+        "inflight": 0,
+        "served": 170380,
+        "failed": 9
+      },
+      {
+        "name": "dw-3",
+        "url": "http://dw-3:8000",
+        "healthy": true,
+        "breaker": "closed",
+        "inflight": 0,
+        "served": 371842,
+        "failed": 0
+      }
+    ]
+  }
+}

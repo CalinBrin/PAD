@@ -1,12 +1,15 @@
 // Package cache is the response cache of the proxy, kept in Redis so that
 // every proxy replica shares it and it survives a proxy restart.
 //
-// Invalidation uses generations (ADR 0002). Each namespace ("employees") has a
-// counter gen:<ns>. A cache key contains the generation read when the request
-// started; a write increments the counter before and after it is forwarded.
-// An answer computed from old data is therefore stored under an old
-// generation that no reader uses any more: a slow GET that started before a
-// PUT cannot put the old value back in the cache.
+// Invalidation uses generation counters (ADR 0002). A cached answer depends
+// on a few counters (for GET /employees/a: gen:employees:all and
+// gen:employees:item:a; for a list page: gen:employees:all and
+// gen:employees:lists). The counters are read, together with the entry, in
+// one MGET BEFORE the warehouse is asked, and stored inside the entry.
+// An entry is used only while its counters are unchanged. A write increments
+// the counters of what it touches, before and after it is forwarded. So an
+// answer computed from old data (a slow GET that started before a PUT) carries
+// old counters and is never served, whenever it is written.
 package cache
 
 import (
@@ -14,6 +17,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -29,20 +34,27 @@ type Entry struct {
 	Header   map[string]string `json:"header"`
 	Body     []byte            `json:"body"`
 	StoredAt time.Time         `json:"stored_at"`
-	Gen      int64             `json:"gen"`
+	Gens     []int64           `json:"gens"` // the counters read before the upstream request
 }
 
-// Redis implements the cache. After an error it stops calling Redis for
-// Backoff (fail fast), so an unreachable Redis does not add a timeout to every
-// request.
+// Redis implements the cache.
+//
+// Fail fast: after an error Redis is marked down and no request calls it any
+// more (no request waits for a Redis timeout); one background probe pings it
+// every Backoff and marks it up again.
 type Redis struct {
 	c       *redis.Client
 	Backoff time.Duration
-	down    atomic.Int64 // unix nanos until which Redis is considered down
+	down    atomic.Bool
+	probing atomic.Bool
 	errors  atomic.Int64
-	// set when an invalidation could not be written: the generation must be
-	// bumped before the cache is used again
-	pendingBump atomic.Bool
+
+	// invalidations that could not be written: they are written before the
+	// cache is used again
+	mu      sync.Mutex
+	pending map[string]bool
+	// OnUp is called when Redis is reachable again (logging).
+	OnUp func()
 }
 
 // NewRedis connects lazily to addr (host:port).
@@ -58,7 +70,7 @@ func NewRedis(addr string, timeout time.Duration) *Redis {
 		PoolSize:     64,
 		MaxRetries:   0,
 	})
-	return &Redis{c: c, Backoff: time.Second}
+	return &Redis{c: c, Backoff: 500 * time.Millisecond, pending: map[string]bool{}}
 }
 
 // Client exposes the Redis client (the client registry uses the same server).
@@ -67,80 +79,91 @@ func (r *Redis) Client() *redis.Client { return r.c }
 func (r *Redis) Errors() int64 { return r.errors.Load() }
 
 // Available reports whether Redis is considered reachable.
-func (r *Redis) Available() bool { return time.Now().UnixNano() >= r.down.Load() }
+func (r *Redis) Available() bool { return !r.down.Load() }
 
 func (r *Redis) failed(err error) error {
 	if err == nil || errors.Is(err, redis.Nil) {
 		return err
 	}
 	r.errors.Add(1)
-	r.down.Store(time.Now().Add(r.Backoff).UnixNano())
+	r.down.Store(true)
+	if r.probing.CompareAndSwap(false, true) {
+		go r.probe()
+	}
 	return fmt.Errorf("%w: %v", ErrUnavailable, err)
 }
 
+func (r *Redis) probe() {
+	defer r.probing.Store(false)
+	for {
+		time.Sleep(r.Backoff)
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		err := r.c.Ping(ctx).Err()
+		cancel()
+		if err == nil {
+			r.down.Store(false)
+			if r.OnUp != nil {
+				r.OnUp()
+			}
+			return
+		}
+	}
+}
+
 func (r *Redis) check() error {
-	if !r.Available() {
+	if r.down.Load() {
 		return ErrUnavailable
 	}
 	return nil
 }
 
-func genKey(ns string) string { return "gen:" + ns }
-
-// Generation returns the current generation of the namespace. If an earlier
-// invalidation was lost, it is written first; until then the cache is not used.
-func (r *Redis) Generation(ctx context.Context, ns string) (int64, error) {
-	if err := r.check(); err != nil {
-		return 0, err
+// flushPending writes the invalidations lost while Redis was unreachable.
+func (r *Redis) flushPending(ctx context.Context) error {
+	r.mu.Lock()
+	keys := make([]string, 0, len(r.pending))
+	for k := range r.pending {
+		keys = append(keys, k)
 	}
-	if r.pendingBump.Load() {
-		if _, err := r.Bump(ctx, ns); err != nil {
-			return 0, err
+	r.mu.Unlock()
+	if len(keys) == 0 {
+		return nil
+	}
+	return r.Bump(ctx, keys...)
+}
+
+// Lookup reads the entry and the counters it depends on in one round trip.
+// It returns the entry only if it is still valid, and always the current
+// counters (to be stored in the entry built from the upstream answer).
+func (r *Redis) Lookup(ctx context.Context, key string, deps []string) (*Entry, []int64, error) {
+	if err := r.check(); err != nil {
+		return nil, nil, err
+	}
+	if err := r.flushPending(ctx); err != nil {
+		return nil, nil, err
+	}
+	vals, err := r.c.MGet(ctx, append([]string{"cache:" + key}, deps...)...).Result()
+	if err != nil {
+		return nil, nil, r.failed(err)
+	}
+	gens := make([]int64, len(deps))
+	for i, v := range vals[1:] {
+		if s, ok := v.(string); ok {
+			fmt.Sscan(s, &gens[i])
 		}
 	}
-	g, err := r.c.Get(ctx, genKey(ns)).Int64()
-	if errors.Is(err, redis.Nil) {
-		return 0, nil
-	}
-	if err != nil {
-		return 0, r.failed(err)
-	}
-	return g, nil
-}
-
-// Bump increments the generation: every entry of the namespace becomes
-// unreachable at once (O(1), no key scan).
-func (r *Redis) Bump(ctx context.Context, ns string) (int64, error) {
-	g, err := r.c.Incr(ctx, genKey(ns)).Result()
-	if err != nil {
-		r.pendingBump.Store(true)
-		return 0, r.failed(err)
-	}
-	r.pendingBump.Store(false)
-	return g, nil
-}
-
-// Get returns the entry stored under key.
-func (r *Redis) Get(ctx context.Context, key string) (Entry, bool, error) {
-	if err := r.check(); err != nil {
-		return Entry{}, false, err
-	}
-	b, err := r.c.Get(ctx, "cache:"+key).Bytes()
-	if errors.Is(err, redis.Nil) {
-		return Entry{}, false, nil
-	}
-	if err != nil {
-		return Entry{}, false, r.failed(err)
+	s, ok := vals[0].(string)
+	if !ok {
+		return nil, gens, nil
 	}
 	var e Entry
-	if err := json.Unmarshal(b, &e); err != nil {
-		return Entry{}, false, nil
+	if json.Unmarshal([]byte(s), &e) != nil || !slices.Equal(e.Gens, gens) {
+		return nil, gens, nil // absent, unreadable or invalidated since it was computed
 	}
-	return e, true, nil
+	return &e, gens, nil
 }
 
-// Set stores the entry for ttl.
-func (r *Redis) Set(ctx context.Context, key string, e Entry, ttl time.Duration) error {
+// Store writes the entry for ttl.
+func (r *Redis) Store(ctx context.Context, key string, e Entry, ttl time.Duration) error {
 	if err := r.check(); err != nil {
 		return err
 	}
@@ -151,12 +174,43 @@ func (r *Redis) Set(ctx context.Context, key string, e Entry, ttl time.Duration)
 	return r.failed(r.c.Set(ctx, "cache:"+key, b, ttl).Err())
 }
 
-// Ping checks the connection (and clears the fail-fast window on success).
+// Bump increments the counters (one pipelined round trip). The counters have
+// no TTL: with maxmemory-policy volatile-lru Redis never evicts them.
+// If Redis cannot be reached, the keys are kept and bumped before the cache
+// is used again.
+func (r *Redis) Bump(ctx context.Context, keys ...string) error {
+	if r.down.Load() { // do not wait for a timeout: remember them
+		r.mu.Lock()
+		for _, k := range keys {
+			r.pending[k] = true
+		}
+		r.mu.Unlock()
+		return ErrUnavailable
+	}
+	_, err := r.c.Pipelined(ctx, func(p redis.Pipeliner) error {
+		for _, k := range keys {
+			p.Incr(ctx, k)
+		}
+		return nil
+	})
+	r.mu.Lock()
+	for _, k := range keys {
+		if err != nil {
+			r.pending[k] = true
+		} else {
+			delete(r.pending, k)
+		}
+	}
+	r.mu.Unlock()
+	return r.failed(err)
+}
+
+// Ping checks the connection.
 func (r *Redis) Ping(ctx context.Context) error {
 	if err := r.c.Ping(ctx).Err(); err != nil {
 		return r.failed(err)
 	}
-	r.down.Store(0)
+	r.down.Store(false)
 	return nil
 }
 
