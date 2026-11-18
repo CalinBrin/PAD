@@ -1,0 +1,144 @@
+# Smart proxy: 5 cereri pe o singură conexiune keep-alive; registrul clienților și al cererilor în Redis
+# X-Client-ID: demo-client
+# generat de scripts/demo.sh la 2026-11-18T20:57:35Z
+
+## curl: 5 URL-uri, o singură conexiune TCP (num_connects=1 doar la prima)
+http://localhost:8080/employees/emp-j-001 status=200 num_connects=1
+http://localhost:8080/employees/emp-j-002 status=200 num_connects=0
+http://localhost:8080/employees/emp-j-003 status=200 num_connects=0
+http://localhost:8080/employees/emp-x-001 status=200 num_connects=0
+http://localhost:8080/employees?limit=3 status=200 num_connects=0
+
+## GET :8081/proxy/requests/demo-smart-001 (ultima cerere cu acest id)
+{
+  "attempts": "1",
+  "backend": "dw-2",
+  "cache": "MISS",
+  "client": "192.168.65.1",
+  "client_id": "demo-client",
+  "duration_ms": "8",
+  "method": "GET",
+  "path": "/employees?limit=3",
+  "proxy": "proxy-1",
+  "remote_addr": "192.168.65.1:17918",
+  "started": "2026-11-18T20:57:35.636290885Z",
+  "state": "done",
+  "status": "200"
+}
+
+## GET :8081/proxy/clients
+{
+  "clients": [
+    {
+      "client": "172.20.0.10",
+      "open_conns": 0,
+      "conns_total": 16,
+      "conns_rejected": 0,
+      "requests": 336584,
+      "first_seen": "2026-11-18T20:53:54.610964797Z",
+      "last_seen": "2026-11-18T20:54:16.247499293Z",
+      "last_path": "GET /employees/bench-154"
+    },
+    {
+      "client": "172.20.0.5",
+      "open_conns": 0,
+      "conns_total": 64,
+      "conns_rejected": 0,
+      "requests": 834217,
+      "first_seen": "2026-11-18T20:46:56.787600631Z",
+      "last_seen": "2026-11-18T20:53:25.234860422Z",
+      "last_path": "GET /employees/bench-046"
+    },
+    {
+      "client": "172.20.0.8",
+      "open_conns": 1,
+      "conns_total": 3,
+      "conns_rejected": 0,
+      "requests": 463,
+      "first_seen": "2026-11-18T20:42:07.326981678Z",
+      "last_seen": "2026-11-18T20:57:35.493884594Z",
+      "last_path": "GET /updates/employees?since=2026-11-18T20:57:31.237Z"
+    },
+    {
+      "client": "172.20.0.9",
+      "open_conns": 1,
+      "conns_total": 3,
+      "conns_rejected": 0,
+      "requests": 464,
+      "first_seen": "2026-11-18T20:42:07.378454344Z",
+      "last_seen": "2026-11-18T20:57:35.510761177Z",
+      "last_path": "GET /updates/employees?since=2026-11-18T20:57:31.237Z"
+    },
+    {
+      "client": "192.168.65.1",
+      "open_conns": 0,
+      "conns_total": 80,
+      "conns_rejected": 0,
+      "requests": 88,
+      "first_seen": "2026-11-18T20:55:32.675204092Z",
+      "last_seen": "2026-11-18T20:57:35.636290885Z",
+      "last_path": "GET /employees?limit=3"
+    }
+  ],
+  "source": "redis"
+}
+
+## GET :8081/proxy/stats (conns_new / conns_reused: pool-ul spre replici)
+{
+  "requests": 1768307,
+  "cache": {
+    "enabled": true,
+    "available": true,
+    "hits": 839005,
+    "misses": 79247,
+    "bypass": 813310,
+    "hit_ratio": 0.9136979826888479,
+    "invalidations": 62222,
+    "delayed_invalidations": 2,
+    "invalidation_errors": 10450,
+    "redis_errors": 18
+  },
+  "upstream": {
+    "algorithm": "round_robin",
+    "requests": 929321,
+    "retries": 19,
+    "errors": 21,
+    "no_backend": 0,
+    "breaker_opened": 3,
+    "conns_new": 30,
+    "conns_reused": 929282,
+    "backends": [
+      {
+        "name": "dw-1",
+        "url": "http://dw-1:8000",
+        "healthy": true,
+        "breaker": "closed",
+        "inflight": 0,
+        "served": 376385,
+        "failed": 8
+      },
+      {
+        "name": "dw-2",
+        "url": "http://dw-2:8000",
+        "healthy": true,
+        "breaker": "closed",
+        "inflight": 0,
+        "served": 175735,
+        "failed": 11
+      },
+      {
+        "name": "dw-3",
+        "url": "http://dw-3:8000",
+        "healthy": true,
+        "breaker": "closed",
+        "inflight": 0,
+        "served": 377201,
+        "failed": 2
+      }
+    ]
+  },
+  "clients": {
+    "open_conns": 2,
+    "registry_dropped_events": 505794
+  }
+}

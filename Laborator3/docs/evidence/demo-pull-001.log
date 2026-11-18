@@ -1,0 +1,30 @@
+# POST de la client (cu Idempotency-Key), apoi pull de la nodul sursă XML
+# correlation_id=demo-pull-001-*
+# generat de scripts/demo.sh la 2026-11-18T20:57:03Z
+
+## Răspunsuri (client)
+20:57:03.579  POST   /employees/emp-x-003         -> HTTP/1.1 200 OK | X-Attempts: 1 X-Cache: INVALIDATE X-Changed: true X-Upstream: dw-3 | "salary":45000
+(același POST, aceeași cheie: reluat, fără efect nou)
+20:57:03.618  POST   /employees/emp-x-003         -> HTTP/1.1 200 OK | X-Attempts: 1 X-Cache: INVALIDATE X-Changed: true X-Upstream: dw-1 | "salary":46000
+20:57:03.647  POST   /employees/emp-x-003         -> HTTP/1.1 200 OK | Idempotent-Replayed: true X-Attempts: 1 X-Cache: INVALIDATE X-Changed: false X-Upstream: dw-2 | "salary":46000
+
+## Loguri (proxy, replici, source-xml)
+proxy | time=2026-11-18T20:57:03.548Z level=INFO msg="cache invalidated" component=proxy proxy=proxy-1 event=cache_invalidated keys="[gen:employees:item:emp-x-003 gen:employees:lists]" reason=before_write method=POST path=/employees/emp-x-003 correlation_id=demo-pull-001-1
+proxy | time=2026-11-18T20:57:03.558Z level=INFO msg="cache invalidated" component=proxy proxy=proxy-1 event=cache_invalidated keys="[gen:employees:item:emp-x-003 gen:employees:lists]" reason=after_write method=POST path=/employees/emp-x-003 correlation_id=demo-pull-001-1
+proxy | time=2026-11-18T20:57:03.558Z level=INFO msg=proxied component=proxy proxy=proxy-1 event=proxied method=POST path=/employees/emp-x-003 status=200 cache=INVALIDATE backend=dw-3 attempts=1 duration_ms=10 client=192.168.65.1 correlation_id=demo-pull-001-1
+proxy | time=2026-11-18T20:57:03.558Z level=INFO msg="http request" component=proxy proxy=proxy-1 event=http_request method=POST path=/employees/emp-x-003 status=200 duration_ms=10 correlation_id=demo-pull-001-1
+dw-3 | time=2026-11-18T20:57:03.558Z level=INFO msg="employee written" component=dw node=dw-3 event=employee_written method=POST id=emp-x-003 version=4 created=false changed=true replayed=false by=demo-client correlation_id=demo-pull-001-1
+dw-3 | time=2026-11-18T20:57:03.558Z level=INFO msg="http request" component=dw node=dw-3 event=http_request method=POST path=/employees/emp-x-003 status=200 duration_ms=10 correlation_id=demo-pull-001-1
+proxy | time=2026-11-18T20:57:03.589Z level=INFO msg="cache invalidated" component=proxy proxy=proxy-1 event=cache_invalidated keys="[gen:employees:item:emp-x-003 gen:employees:lists]" reason=before_write method=POST path=/employees/emp-x-003 correlation_id=demo-pull-001-2
+dw-1 | time=2026-11-18T20:57:03.596Z level=INFO msg="employee written" component=dw node=dw-1 event=employee_written method=POST id=emp-x-003 version=5 created=false changed=true replayed=false by=demo-client correlation_id=demo-pull-001-2
+dw-1 | time=2026-11-18T20:57:03.596Z level=INFO msg="http request" component=dw node=dw-1 event=http_request method=POST path=/employees/emp-x-003 status=200 duration_ms=6 correlation_id=demo-pull-001-2
+proxy | time=2026-11-18T20:57:03.597Z level=INFO msg="cache invalidated" component=proxy proxy=proxy-1 event=cache_invalidated keys="[gen:employees:item:emp-x-003 gen:employees:lists]" reason=after_write method=POST path=/employees/emp-x-003 correlation_id=demo-pull-001-2
+proxy | time=2026-11-18T20:57:03.597Z level=INFO msg=proxied component=proxy proxy=proxy-1 event=proxied method=POST path=/employees/emp-x-003 status=200 cache=INVALIDATE backend=dw-1 attempts=1 duration_ms=7 client=192.168.65.1 correlation_id=demo-pull-001-2
+proxy | time=2026-11-18T20:57:03.597Z level=INFO msg="http request" component=proxy proxy=proxy-1 event=http_request method=POST path=/employees/emp-x-003 status=200 duration_ms=7 correlation_id=demo-pull-001-2
+proxy | time=2026-11-18T20:57:03.625Z level=INFO msg="cache invalidated" component=proxy proxy=proxy-1 event=cache_invalidated keys="[gen:employees:item:emp-x-003 gen:employees:lists]" reason=before_write method=POST path=/employees/emp-x-003 correlation_id=demo-pull-001-3
+proxy | time=2026-11-18T20:57:03.627Z level=INFO msg="cache invalidated" component=proxy proxy=proxy-1 event=cache_invalidated keys="[gen:employees:item:emp-x-003 gen:employees:lists]" reason=after_write method=POST path=/employees/emp-x-003 correlation_id=demo-pull-001-3
+proxy | time=2026-11-18T20:57:03.627Z level=INFO msg=proxied component=proxy proxy=proxy-1 event=proxied method=POST path=/employees/emp-x-003 status=200 cache=INVALIDATE backend=dw-2 attempts=1 duration_ms=2 client=192.168.65.1 correlation_id=demo-pull-001-3
+proxy | time=2026-11-18T20:57:03.627Z level=INFO msg="http request" component=proxy proxy=proxy-1 event=http_request method=POST path=/employees/emp-x-003 status=200 duration_ms=2 correlation_id=demo-pull-001-3
+dw-2 | time=2026-11-18T20:57:03.627Z level=INFO msg="employee written" component=dw node=dw-2 event=employee_written method=POST id=emp-x-003 version=5 created=false changed=false replayed=true by=demo-client correlation_id=demo-pull-001-3
+dw-2 | time=2026-11-18T20:57:03.627Z level=INFO msg="http request" component=dw node=dw-2 event=http_request method=POST path=/employees/emp-x-003 status=200 duration_ms=1 correlation_id=demo-pull-001-3
+source-xml | time=2026-11-18T20:57:05.514Z level=INFO msg="modification pulled from the warehouse" component=source node=source-xml event=change_applied id=emp-x-003 version=5 updated_by=demo-client salary=46000 name="Maria Rusu" correlation_id=source-xml-pull-da6518

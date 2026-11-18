@@ -1,0 +1,68 @@
+# dw-1 răspunde 503 la cereri, dar /readyz e OK: detecție pasivă (breaker)
+# BREAKER_THRESHOLD=3, BREAKER_COOLDOWN=5s; Cache-Control: no-cache ca fiecare GET să ajungă la o replică
+# generat de scripts/demo.sh la 2026-11-18T20:57:23Z
+
+## Răspunsuri (client)
+20:57:24.003  GET    /employees/emp-j-005         -> HTTP/1.1 200 OK | X-Attempts: 1 X-Cache: MISS X-Upstream: dw-2 | "salary":33000
+20:57:24.033  GET    /employees/emp-j-005         -> HTTP/1.1 200 OK | X-Attempts: 1 X-Cache: MISS X-Upstream: dw-3 | "salary":33000
+20:57:24.068  GET    /employees/emp-j-005         -> HTTP/1.1 200 OK | X-Attempts: 2 X-Cache: MISS X-Upstream: dw-3 | "salary":33000
+20:57:24.096  GET    /employees/emp-j-005         -> HTTP/1.1 200 OK | X-Attempts: 1 X-Cache: MISS X-Upstream: dw-3 | "salary":33000
+20:57:24.150  GET    /employees/emp-j-005         -> HTTP/1.1 200 OK | X-Attempts: 2 X-Cache: MISS X-Upstream: dw-2 | "salary":33000
+20:57:24.178  GET    /employees/emp-j-005         -> HTTP/1.1 200 OK | X-Attempts: 1 X-Cache: MISS X-Upstream: dw-3 | "salary":33000
+20:57:24.222  GET    /employees/emp-j-005         -> HTTP/1.1 200 OK | X-Attempts: 2 X-Cache: MISS X-Upstream: dw-3 | "salary":33000
+20:57:24.251  GET    /employees/emp-j-005         -> HTTP/1.1 200 OK | X-Attempts: 1 X-Cache: MISS X-Upstream: dw-2 | "salary":33000
+20:57:24.279  GET    /employees/emp-j-005         -> HTTP/1.1 200 OK | X-Attempts: 1 X-Cache: MISS X-Upstream: dw-3 | "salary":33000
+2026-11-18T20:57:24Z dw-1 reparat; aștept cooldown-ul
+20:57:30.360  GET    /employees/emp-j-005         -> HTTP/1.1 200 OK | X-Attempts: 1 X-Cache: MISS X-Upstream: dw-2 | "salary":33000
+20:57:30.399  GET    /employees/emp-j-005         -> HTTP/1.1 200 OK | X-Attempts: 1 X-Cache: MISS X-Upstream: dw-3 | "salary":33000
+20:57:30.428  GET    /employees/emp-j-005         -> HTTP/1.1 200 OK | X-Attempts: 1 X-Cache: MISS X-Upstream: dw-1 | "salary":33000
+20:57:30.457  GET    /employees/emp-j-005         -> HTTP/1.1 200 OK | X-Attempts: 1 X-Cache: MISS X-Upstream: dw-2 | "salary":33000
+
+## Loguri
+proxy | time=2026-11-18T20:57:23.980Z level=INFO msg=proxied component=proxy proxy=proxy-1 event=proxied method=GET path=/employees/emp-j-005 status=200 cache=MISS backend=dw-2 attempts=1 duration_ms=2 client=192.168.65.1 correlation_id=demo-breaker-001-1
+proxy | time=2026-11-18T20:57:23.980Z level=INFO msg="http request" component=proxy proxy=proxy-1 event=http_request method=GET path=/employees/emp-j-005 status=200 duration_ms=2 correlation_id=demo-breaker-001-1
+dw-2 | time=2026-11-18T20:57:23.980Z level=INFO msg="http request" component=dw node=dw-2 event=http_request method=GET path=/employees/emp-j-005 status=200 duration_ms=1 correlation_id=demo-breaker-001-1
+proxy | time=2026-11-18T20:57:24.014Z level=INFO msg=proxied component=proxy proxy=proxy-1 event=proxied method=GET path=/employees/emp-j-005 status=200 cache=MISS backend=dw-3 attempts=1 duration_ms=3 client=192.168.65.1 correlation_id=demo-breaker-001-2
+proxy | time=2026-11-18T20:57:24.014Z level=INFO msg="http request" component=proxy proxy=proxy-1 event=http_request method=GET path=/employees/emp-j-005 status=200 duration_ms=3 correlation_id=demo-breaker-001-2
+dw-3 | time=2026-11-18T20:57:24.014Z level=INFO msg="http request" component=dw node=dw-3 event=http_request method=GET path=/employees/emp-j-005 status=200 duration_ms=3 correlation_id=demo-breaker-001-2
+dw-1 | time=2026-11-18T20:57:24.040Z level=INFO msg="http request" component=dw node=dw-1 event=http_request method=GET path=/employees/emp-j-005 status=503 duration_ms=0 correlation_id=demo-breaker-001-3
+proxy | time=2026-11-18T20:57:24.041Z level=WARN msg="upstream attempt failed" component=proxy proxy=proxy-1 event=upstream_failed backend=dw-1 attempt=1 status=503 error="" will_retry=true method=GET path=/employees/emp-j-005 correlation_id=demo-breaker-001-3
+dw-3 | time=2026-11-18T20:57:24.048Z level=INFO msg="http request" component=dw node=dw-3 event=http_request method=GET path=/employees/emp-j-005 status=200 duration_ms=1 correlation_id=demo-breaker-001-3
+proxy | time=2026-11-18T20:57:24.049Z level=INFO msg=proxied component=proxy proxy=proxy-1 event=proxied method=GET path=/employees/emp-j-005 status=200 cache=MISS backend=dw-3 attempts=2 duration_ms=8 client=192.168.65.1 correlation_id=demo-breaker-001-3
+proxy | time=2026-11-18T20:57:24.049Z level=INFO msg="http request" component=proxy proxy=proxy-1 event=http_request method=GET path=/employees/emp-j-005 status=200 duration_ms=8 correlation_id=demo-breaker-001-3
+proxy | time=2026-11-18T20:57:24.077Z level=INFO msg=proxied component=proxy proxy=proxy-1 event=proxied method=GET path=/employees/emp-j-005 status=200 cache=MISS backend=dw-3 attempts=1 duration_ms=1 client=192.168.65.1 correlation_id=demo-breaker-001-4
+proxy | time=2026-11-18T20:57:24.077Z level=INFO msg="http request" component=proxy proxy=proxy-1 event=http_request method=GET path=/employees/emp-j-005 status=200 duration_ms=1 correlation_id=demo-breaker-001-4
+dw-3 | time=2026-11-18T20:57:24.077Z level=INFO msg="http request" component=dw node=dw-3 event=http_request method=GET path=/employees/emp-j-005 status=200 duration_ms=1 correlation_id=demo-breaker-001-4
+dw-1 | time=2026-11-18T20:57:24.103Z level=INFO msg="http request" component=dw node=dw-1 event=http_request method=GET path=/employees/emp-j-005 status=503 duration_ms=0 correlation_id=demo-breaker-001-5
+proxy | time=2026-11-18T20:57:24.103Z level=WARN msg="upstream attempt failed" component=proxy proxy=proxy-1 event=upstream_failed backend=dw-1 attempt=1 status=503 error="" will_retry=true method=GET path=/employees/emp-j-005 correlation_id=demo-breaker-001-5
+proxy | time=2026-11-18T20:57:24.129Z level=INFO msg=proxied component=proxy proxy=proxy-1 event=proxied method=GET path=/employees/emp-j-005 status=200 cache=MISS backend=dw-2 attempts=2 duration_ms=25 client=192.168.65.1 correlation_id=demo-breaker-001-5
+proxy | time=2026-11-18T20:57:24.129Z level=INFO msg="http request" component=proxy proxy=proxy-1 event=http_request method=GET path=/employees/emp-j-005 status=200 duration_ms=25 correlation_id=demo-breaker-001-5
+dw-2 | time=2026-11-18T20:57:24.129Z level=INFO msg="http request" component=dw node=dw-2 event=http_request method=GET path=/employees/emp-j-005 status=200 duration_ms=1 correlation_id=demo-breaker-001-5
+proxy | time=2026-11-18T20:57:24.159Z level=INFO msg=proxied component=proxy proxy=proxy-1 event=proxied method=GET path=/employees/emp-j-005 status=200 cache=MISS backend=dw-3 attempts=1 duration_ms=2 client=192.168.65.1 correlation_id=demo-breaker-001-6
+proxy | time=2026-11-18T20:57:24.159Z level=INFO msg="http request" component=proxy proxy=proxy-1 event=http_request method=GET path=/employees/emp-j-005 status=200 duration_ms=2 correlation_id=demo-breaker-001-6
+dw-3 | time=2026-11-18T20:57:24.159Z level=INFO msg="http request" component=dw node=dw-3 event=http_request method=GET path=/employees/emp-j-005 status=200 duration_ms=1 correlation_id=demo-breaker-001-6
+dw-1 | time=2026-11-18T20:57:24.185Z level=INFO msg="http request" component=dw node=dw-1 event=http_request method=GET path=/employees/emp-j-005 status=503 duration_ms=0 correlation_id=demo-breaker-001-7
+proxy | time=2026-11-18T20:57:24.186Z level=WARN msg="circuit breaker opened" component=proxy proxy=proxy-1 event=breaker_open backend=dw-1 correlation_id=demo-breaker-001-7
+proxy | time=2026-11-18T20:57:24.186Z level=WARN msg="upstream attempt failed" component=proxy proxy=proxy-1 event=upstream_failed backend=dw-1 attempt=1 status=503 error="" will_retry=true method=GET path=/employees/emp-j-005 correlation_id=demo-breaker-001-7
+proxy | time=2026-11-18T20:57:24.203Z level=INFO msg=proxied component=proxy proxy=proxy-1 event=proxied method=GET path=/employees/emp-j-005 status=200 cache=MISS backend=dw-3 attempts=2 duration_ms=18 client=192.168.65.1 correlation_id=demo-breaker-001-7
+proxy | time=2026-11-18T20:57:24.203Z level=INFO msg="http request" component=proxy proxy=proxy-1 event=http_request method=GET path=/employees/emp-j-005 status=200 duration_ms=18 correlation_id=demo-breaker-001-7
+dw-3 | time=2026-11-18T20:57:24.203Z level=INFO msg="http request" component=dw node=dw-3 event=http_request method=GET path=/employees/emp-j-005 status=200 duration_ms=1 correlation_id=demo-breaker-001-7
+proxy | time=2026-11-18T20:57:24.231Z level=INFO msg=proxied component=proxy proxy=proxy-1 event=proxied method=GET path=/employees/emp-j-005 status=200 cache=MISS backend=dw-2 attempts=1 duration_ms=1 client=192.168.65.1 correlation_id=demo-breaker-001-8
+proxy | time=2026-11-18T20:57:24.231Z level=INFO msg="http request" component=proxy proxy=proxy-1 event=http_request method=GET path=/employees/emp-j-005 status=200 duration_ms=2 correlation_id=demo-breaker-001-8
+dw-2 | time=2026-11-18T20:57:24.231Z level=INFO msg="http request" component=dw node=dw-2 event=http_request method=GET path=/employees/emp-j-005 status=200 duration_ms=1 correlation_id=demo-breaker-001-8
+proxy | time=2026-11-18T20:57:24.260Z level=INFO msg=proxied component=proxy proxy=proxy-1 event=proxied method=GET path=/employees/emp-j-005 status=200 cache=MISS backend=dw-3 attempts=1 duration_ms=2 client=192.168.65.1 correlation_id=demo-breaker-001-9
+proxy | time=2026-11-18T20:57:24.260Z level=INFO msg="http request" component=proxy proxy=proxy-1 event=http_request method=GET path=/employees/emp-j-005 status=200 duration_ms=2 correlation_id=demo-breaker-001-9
+dw-3 | time=2026-11-18T20:57:24.260Z level=INFO msg="http request" component=dw node=dw-3 event=http_request method=GET path=/employees/emp-j-005 status=200 duration_ms=1 correlation_id=demo-breaker-001-9
+proxy | time=2026-11-18T20:57:29.514Z level=INFO msg="circuit breaker closed" component=proxy proxy=proxy-1 event=breaker_closed backend=dw-1
+dw-2 | time=2026-11-18T20:57:30.322Z level=INFO msg="http request" component=dw node=dw-2 event=http_request method=GET path=/employees/emp-j-005 status=200 duration_ms=2 correlation_id=demo-breaker-001-10
+proxy | time=2026-11-18T20:57:30.323Z level=INFO msg=proxied component=proxy proxy=proxy-1 event=proxied method=GET path=/employees/emp-j-005 status=200 cache=MISS backend=dw-2 attempts=1 duration_ms=3 client=192.168.65.1 correlation_id=demo-breaker-001-10
+proxy | time=2026-11-18T20:57:30.323Z level=INFO msg="http request" component=proxy proxy=proxy-1 event=http_request method=GET path=/employees/emp-j-005 status=200 duration_ms=3 correlation_id=demo-breaker-001-10
+proxy | time=2026-11-18T20:57:30.375Z level=INFO msg=proxied component=proxy proxy=proxy-1 event=proxied method=GET path=/employees/emp-j-005 status=200 cache=MISS backend=dw-3 attempts=1 duration_ms=2 client=192.168.65.1 correlation_id=demo-breaker-001-11
+proxy | time=2026-11-18T20:57:30.375Z level=INFO msg="http request" component=proxy proxy=proxy-1 event=http_request method=GET path=/employees/emp-j-005 status=200 duration_ms=2 correlation_id=demo-breaker-001-11
+dw-3 | time=2026-11-18T20:57:30.375Z level=INFO msg="http request" component=dw node=dw-3 event=http_request method=GET path=/employees/emp-j-005 status=200 duration_ms=2 correlation_id=demo-breaker-001-11
+dw-1 | time=2026-11-18T20:57:30.409Z level=INFO msg="http request" component=dw node=dw-1 event=http_request method=GET path=/employees/emp-j-005 status=200 duration_ms=1 correlation_id=demo-breaker-001-12
+proxy | time=2026-11-18T20:57:30.409Z level=INFO msg=proxied component=proxy proxy=proxy-1 event=proxied method=GET path=/employees/emp-j-005 status=200 cache=MISS backend=dw-1 attempts=1 duration_ms=2 client=192.168.65.1 correlation_id=demo-breaker-001-12
+proxy | time=2026-11-18T20:57:30.409Z level=INFO msg="http request" component=proxy proxy=proxy-1 event=http_request method=GET path=/employees/emp-j-005 status=200 duration_ms=2 correlation_id=demo-breaker-001-12
+proxy | time=2026-11-18T20:57:30.437Z level=INFO msg=proxied component=proxy proxy=proxy-1 event=proxied method=GET path=/employees/emp-j-005 status=200 cache=MISS backend=dw-2 attempts=1 duration_ms=2 client=192.168.65.1 correlation_id=demo-breaker-001-13
+proxy | time=2026-11-18T20:57:30.437Z level=INFO msg="http request" component=proxy proxy=proxy-1 event=http_request method=GET path=/employees/emp-j-005 status=200 duration_ms=2 correlation_id=demo-breaker-001-13
+dw-2 | time=2026-11-18T20:57:30.437Z level=INFO msg="http request" component=dw node=dw-2 event=http_request method=GET path=/employees/emp-j-005 status=200 duration_ms=1 correlation_id=demo-breaker-001-13

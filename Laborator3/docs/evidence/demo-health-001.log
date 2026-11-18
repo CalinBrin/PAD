@@ -1,0 +1,13 @@
+# Health check activ: dw-3 oprit și repornit, fără nicio cerere de la clienți
+# HEALTH_INTERVAL=2s, HEALTH_FALL=2, HEALTH_RISE=2
+# generat de scripts/demo.sh la 2026-11-18T20:57:08Z
+
+## Acțiuni
+2026-11-18T20:57:08Z docker compose stop dw-3
+2026-11-18T20:57:15Z stare backend-uri: "name":"dw-3","url":"http://dw-3:8000","healthy":false
+2026-11-18T20:57:15Z docker compose start dw-3
+2026-11-18T20:57:23Z stare backend-uri: "name":"dw-3","url":"http://dw-3:8000","healthy":true
+
+## Loguri (proxy)
+proxy | time=2026-11-18T20:57:11.323Z level=WARN msg="backend removed from rotation (active health check)" component=proxy proxy=proxy-1 event=backend_down backend=dw-3 consecutive_failures=2 error="Get \"http://dw-3:8000/readyz\": dial tcp: lookup dw-3 on 127.0.0.11:53: no such host"
+proxy | time=2026-11-18T20:57:19.318Z level=INFO msg="backend back in rotation (active health check)" component=proxy proxy=proxy-1 event=backend_up backend=dw-3 consecutive_successes=2

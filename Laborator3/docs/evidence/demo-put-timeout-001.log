@@ -1,0 +1,34 @@
+# PUT aplicat de replică, dar răspunsul întârzie peste UPSTREAM_TIMEOUT (2s)
+# write_delay=3s pe toate replicile (după commit, înainte de răspuns); correlation_id=demo-put-timeout-001-*
+# generat de scripts/demo.sh la 2026-11-18T20:56:53Z
+
+## Răspunsuri (client)
+20:56:53.246  GET    /employees/emp-j-005         -> HTTP/1.1 200 OK | Age: 1 X-Cache: HIT | "salary":32000
+20:56:59.289  PUT    /employees/emp-j-005         -> HTTP/1.1 504 Gateway Timeout | X-Attempts: 3 X-Cache: INVALIDATE X-Outcome: unknown X-Upstream: dw-3 | "code":"upstream_timeout"
+20:56:59.345  GET    /employees/emp-j-005         -> HTTP/1.1 200 OK | X-Attempts: 1 X-Cache: MISS X-Upstream: dw-2 | "salary":33000
+20:56:59.374  GET    /employees/emp-j-005         -> HTTP/1.1 200 OK | Age: 0 X-Cache: HIT | "salary":33000
+
+## Loguri
+proxy | time=2026-11-18T20:56:53.172Z level=INFO msg=proxied component=proxy proxy=proxy-1 event=proxied method=GET path=/employees/emp-j-005 status=200 cache=HIT backend="" attempts=0 duration_ms=0 client=192.168.65.1 correlation_id=demo-put-timeout-001-0
+proxy | time=2026-11-18T20:56:53.172Z level=INFO msg="http request" component=proxy proxy=proxy-1 event=http_request method=GET path=/employees/emp-j-005 status=200 duration_ms=0 correlation_id=demo-put-timeout-001-0
+proxy | time=2026-11-18T20:56:53.228Z level=INFO msg=proxied component=proxy proxy=proxy-1 event=proxied method=GET path=/employees/emp-j-005 status=200 cache=HIT backend="" attempts=0 duration_ms=0 client=192.168.65.1 correlation_id=demo-put-timeout-001-1
+proxy | time=2026-11-18T20:56:53.228Z level=INFO msg="http request" component=proxy proxy=proxy-1 event=http_request method=GET path=/employees/emp-j-005 status=200 duration_ms=0 correlation_id=demo-put-timeout-001-1
+proxy | time=2026-11-18T20:56:53.253Z level=INFO msg="cache invalidated" component=proxy proxy=proxy-1 event=cache_invalidated keys="[gen:employees:item:emp-j-005 gen:employees:lists]" reason=before_write method=PUT path=/employees/emp-j-005 correlation_id=demo-put-timeout-001-2
+dw-2 | time=2026-11-18T20:56:53.258Z level=INFO msg="employee written" component=dw node=dw-2 event=employee_written method=PUT id=emp-j-005 version=10 created=false changed=true replayed=false by=demo-client correlation_id=demo-put-timeout-001-2
+proxy | time=2026-11-18T20:56:55.258Z level=WARN msg="upstream attempt failed" component=proxy proxy=proxy-1 event=upstream_failed backend=dw-2 attempt=1 status=0 error="Put \"http://dw-2:8000/employees/emp-j-005\": context deadline exceeded" will_retry=true method=PUT path=/employees/emp-j-005 correlation_id=demo-put-timeout-001-2
+dw-1 | time=2026-11-18T20:56:55.271Z level=INFO msg="employee written" component=dw node=dw-1 event=employee_written method=PUT id=emp-j-005 version=10 created=false changed=false replayed=false by=demo-client correlation_id=demo-put-timeout-001-2
+dw-2 | time=2026-11-18T20:56:56.263Z level=INFO msg="http request" component=dw node=dw-2 event=http_request method=PUT path=/employees/emp-j-005 status=200 duration_ms=3009 correlation_id=demo-put-timeout-001-2
+proxy | time=2026-11-18T20:56:57.270Z level=WARN msg="upstream attempt failed" component=proxy proxy=proxy-1 event=upstream_failed backend=dw-1 attempt=2 status=0 error="Put \"http://dw-1:8000/employees/emp-j-005\": context deadline exceeded" will_retry=true method=PUT path=/employees/emp-j-005 correlation_id=demo-put-timeout-001-2
+dw-3 | time=2026-11-18T20:56:57.334Z level=INFO msg="employee written" component=dw node=dw-3 event=employee_written method=PUT id=emp-j-005 version=10 created=false changed=false replayed=false by=demo-client correlation_id=demo-put-timeout-001-2
+dw-1 | time=2026-11-18T20:56:58.272Z level=INFO msg="http request" component=dw node=dw-1 event=http_request method=PUT path=/employees/emp-j-005 status=200 duration_ms=3003 correlation_id=demo-put-timeout-001-2
+proxy | time=2026-11-18T20:56:59.256Z level=WARN msg="upstream attempt failed" component=proxy proxy=proxy-1 event=upstream_failed backend=dw-3 attempt=3 status=0 error="Put \"http://dw-3:8000/employees/emp-j-005\": context deadline exceeded" will_retry=false method=PUT path=/employees/emp-j-005 correlation_id=demo-put-timeout-001-2
+proxy | time=2026-11-18T20:56:59.257Z level=INFO msg="cache invalidated" component=proxy proxy=proxy-1 event=cache_invalidated keys="[gen:employees:item:emp-j-005 gen:employees:lists]" reason=after_write method=PUT path=/employees/emp-j-005 correlation_id=demo-put-timeout-001-2
+proxy | time=2026-11-18T20:56:59.257Z level=INFO msg=proxied component=proxy proxy=proxy-1 event=proxied method=PUT path=/employees/emp-j-005 status=504 cache=INVALIDATE backend=dw-3 attempts=3 duration_ms=6003 client=192.168.65.1 correlation_id=demo-put-timeout-001-2
+proxy | time=2026-11-18T20:56:59.257Z level=INFO msg="http request" component=proxy proxy=proxy-1 event=http_request method=PUT path=/employees/emp-j-005 status=504 duration_ms=6003 correlation_id=demo-put-timeout-001-2
+dw-2 | time=2026-11-18T20:56:59.323Z level=INFO msg="http request" component=dw node=dw-2 event=http_request method=GET path=/employees/emp-j-005 status=200 duration_ms=1 correlation_id=demo-put-timeout-001-3
+proxy | time=2026-11-18T20:56:59.324Z level=INFO msg=proxied component=proxy proxy=proxy-1 event=proxied method=GET path=/employees/emp-j-005 status=200 cache=MISS backend=dw-2 attempts=1 duration_ms=2 client=192.168.65.1 correlation_id=demo-put-timeout-001-3
+proxy | time=2026-11-18T20:56:59.324Z level=INFO msg="http request" component=proxy proxy=proxy-1 event=http_request method=GET path=/employees/emp-j-005 status=200 duration_ms=2 correlation_id=demo-put-timeout-001-3
+proxy | time=2026-11-18T20:56:59.352Z level=INFO msg=proxied component=proxy proxy=proxy-1 event=proxied method=GET path=/employees/emp-j-005 status=200 cache=HIT backend="" attempts=0 duration_ms=0 client=192.168.65.1 correlation_id=demo-put-timeout-001-4
+proxy | time=2026-11-18T20:56:59.352Z level=INFO msg="http request" component=proxy proxy=proxy-1 event=http_request method=GET path=/employees/emp-j-005 status=200 duration_ms=0 correlation_id=demo-put-timeout-001-4
+dw-3 | time=2026-11-18T20:57:00.337Z level=INFO msg="http request" component=dw node=dw-3 event=http_request method=PUT path=/employees/emp-j-005 status=200 duration_ms=3005 correlation_id=demo-put-timeout-001-2
+proxy | time=2026-11-18T20:57:02.261Z level=INFO msg="cache invalidated" component=proxy proxy=proxy-1 event=cache_invalidated keys="[gen:employees:item:emp-j-005 gen:employees:lists]" reason=delayed_after_ambiguous_write method=PUT path=/employees/emp-j-005 correlation_id=demo-put-timeout-001-2

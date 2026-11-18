@@ -1,0 +1,33 @@
+# Cursa: un GET început înainte de un PUT citește valoarea veche și răspunde după invalidare
+# read_delay=1500ms pe toate replicile (după citire, înainte de răspuns); correlation_id=demo-race-001-*
+# generat de scripts/demo.sh la 2026-11-18T20:56:50Z
+
+## Răspunsuri (client)
+20:56:50.637  PUT    /employees/emp-j-005         -> HTTP/1.1 200 OK | X-Attempts: 1 X-Cache: INVALIDATE X-Changed: true X-Upstream: dw-1 | "salary":32000
+20:56:51.715  GET    /employees/emp-j-005         -> HTTP/1.1 200 OK | X-Attempts: 1 X-Cache: MISS X-Upstream: dw-3 | "salary":31000
+
+## Intrarea scrisă în Redis de GET-ul lent (generațiile citite ÎNAINTE de PUT)
+"stored_at":"2026-11-18T20:56:51.681848879Z"
+"gens":[0,14]
+contoarele curente: [gen:employees:all, gen:employees:item:emp-j-005] = [0,16]  => intrarea nu mai e validă, nu se servește
+
+20:56:51.985  GET    /employees/emp-j-005         -> HTTP/1.1 200 OK | X-Attempts: 1 X-Cache: MISS X-Upstream: dw-1 | "salary":32000
+20:56:52.010  GET    /employees/emp-j-005         -> HTTP/1.1 200 OK | Age: 0 X-Cache: HIT | "salary":32000
+
+## Loguri
+proxy | time=2026-11-18T20:56:50.126Z level=INFO msg=proxied component=proxy proxy=proxy-1 event=proxied method=GET path=/employees/emp-j-005 status=200 cache=HIT backend="" attempts=0 duration_ms=0 client=192.168.65.1 correlation_id=demo-race-001-0
+proxy | time=2026-11-18T20:56:50.126Z level=INFO msg="http request" component=proxy proxy=proxy-1 event=http_request method=GET path=/employees/emp-j-005 status=200 duration_ms=0 correlation_id=demo-race-001-0
+proxy | time=2026-11-18T20:56:50.601Z level=INFO msg="cache invalidated" component=proxy proxy=proxy-1 event=cache_invalidated keys="[gen:employees:item:emp-j-005 gen:employees:lists]" reason=before_write method=PUT path=/employees/emp-j-005 correlation_id=demo-race-001-2
+dw-1 | time=2026-11-18T20:56:50.606Z level=INFO msg="employee written" component=dw node=dw-1 event=employee_written method=PUT id=emp-j-005 version=9 created=false changed=true replayed=false by=demo-client correlation_id=demo-race-001-2
+dw-1 | time=2026-11-18T20:56:50.606Z level=INFO msg="http request" component=dw node=dw-1 event=http_request method=PUT path=/employees/emp-j-005 status=200 duration_ms=4 correlation_id=demo-race-001-2
+proxy | time=2026-11-18T20:56:50.607Z level=INFO msg="cache invalidated" component=proxy proxy=proxy-1 event=cache_invalidated keys="[gen:employees:item:emp-j-005 gen:employees:lists]" reason=after_write method=PUT path=/employees/emp-j-005 correlation_id=demo-race-001-2
+proxy | time=2026-11-18T20:56:50.607Z level=INFO msg=proxied component=proxy proxy=proxy-1 event=proxied method=PUT path=/employees/emp-j-005 status=200 cache=INVALIDATE backend=dw-1 attempts=1 duration_ms=6 client=192.168.65.1 correlation_id=demo-race-001-2
+proxy | time=2026-11-18T20:56:50.607Z level=INFO msg="http request" component=proxy proxy=proxy-1 event=http_request method=PUT path=/employees/emp-j-005 status=200 duration_ms=6 correlation_id=demo-race-001-2
+dw-3 | time=2026-11-18T20:56:51.681Z level=INFO msg="http request" component=dw node=dw-3 event=http_request method=GET path=/employees/emp-j-005 status=200 duration_ms=1502 correlation_id=demo-race-001-1
+proxy | time=2026-11-18T20:56:51.682Z level=INFO msg=proxied component=proxy proxy=proxy-1 event=proxied method=GET path=/employees/emp-j-005 status=200 cache=MISS backend=dw-3 attempts=1 duration_ms=1502 client=192.168.65.1 correlation_id=demo-race-001-1
+proxy | time=2026-11-18T20:56:51.682Z level=INFO msg="http request" component=proxy proxy=proxy-1 event=http_request method=GET path=/employees/emp-j-005 status=200 duration_ms=1502 correlation_id=demo-race-001-1
+proxy | time=2026-11-18T20:56:51.965Z level=INFO msg=proxied component=proxy proxy=proxy-1 event=proxied method=GET path=/employees/emp-j-005 status=200 cache=MISS backend=dw-1 attempts=1 duration_ms=2 client=192.168.65.1 correlation_id=demo-race-001-3
+proxy | time=2026-11-18T20:56:51.965Z level=INFO msg="http request" component=proxy proxy=proxy-1 event=http_request method=GET path=/employees/emp-j-005 status=200 duration_ms=2 correlation_id=demo-race-001-3
+dw-1 | time=2026-11-18T20:56:51.965Z level=INFO msg="http request" component=dw node=dw-1 event=http_request method=GET path=/employees/emp-j-005 status=200 duration_ms=1 correlation_id=demo-race-001-3
+proxy | time=2026-11-18T20:56:51.992Z level=INFO msg=proxied component=proxy proxy=proxy-1 event=proxied method=GET path=/employees/emp-j-005 status=200 cache=HIT backend="" attempts=0 duration_ms=0 client=192.168.65.1 correlation_id=demo-race-001-4
+proxy | time=2026-11-18T20:56:51.992Z level=INFO msg="http request" component=proxy proxy=proxy-1 event=http_request method=GET path=/employees/emp-j-005 status=200 duration_ms=0 correlation_id=demo-race-001-4
