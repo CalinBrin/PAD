@@ -222,3 +222,5 @@ func Middleware(log *slog.Logger, next http.Handler) http.Handler {
 			"status", rec.Status, "duration_ms", time.Since(start).Milliseconds(), "correlation_id", id)
 	})
 }
+
+func jsonUnmarshal(b []byte, v any) error { return json.Unmarshal(b, v) }
