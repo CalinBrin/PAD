@@ -28,6 +28,22 @@ type HealthChecker struct {
 
 // Run checks immediately, then every Interval, until ctx is done.
 func (h *HealthChecker) Run(ctx context.Context) {
+	h.defaults()
+	t := time.NewTicker(h.Interval)
+	defer t.Stop()
+	for {
+		h.CheckAll(ctx)
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+	}
+}
+
+func (h *HealthChecker) defaults() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	if h.Interval <= 0 {
 		h.Interval = 2 * time.Second
 	}
@@ -43,20 +59,11 @@ func (h *HealthChecker) Run(ctx context.Context) {
 	if h.Client == nil {
 		h.Client = &http.Client{}
 	}
-	t := time.NewTicker(h.Interval)
-	defer t.Stop()
-	for {
-		h.CheckAll(ctx)
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-		}
-	}
 }
 
 // CheckAll probes every backend once, in parallel.
 func (h *HealthChecker) CheckAll(ctx context.Context) {
+	h.defaults()
 	var wg sync.WaitGroup
 	for _, b := range h.Pool.Backends() {
 		wg.Add(1)

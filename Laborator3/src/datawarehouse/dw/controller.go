@@ -196,6 +196,7 @@ func (c *Controller) getEmployee(w http.ResponseWriter, r *http.Request) {
 		c.fail(w, r, err)
 		return
 	}
+	sleep(context.WithoutCancel(r.Context()), c.faults.ReadDelay())
 	if inm := r.Header.Get("If-None-Match"); inm != "" && inm == etag(e, f) {
 		w.Header().Set("ETag", inm)
 		w.WriteHeader(http.StatusNotModified)
@@ -236,6 +237,7 @@ func (c *Controller) listEmployees(w http.ResponseWriter, r *http.Request) {
 		c.fail(w, r, err)
 		return
 	}
+	sleep(context.WithoutCancel(r.Context()), c.faults.ReadDelay())
 	w.Header().Set("Vary", "Accept")
 	w.Header().Set("Cache-Control", fmt.Sprintf("public, max-age=%d", c.cfg.CacheMaxAge))
 	httpx.Write(w, f, http.StatusOK, page)

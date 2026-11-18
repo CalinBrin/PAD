@@ -15,6 +15,7 @@ import (
 type Faults struct {
 	latency    atomic.Int64 // added before every data request
 	writeDelay atomic.Int64 // added after a write is committed, before answering
+	readDelay  atomic.Int64 // added after a read, before answering (the answer is already old)
 	fail       atomic.Bool  // data requests answer 503
 	notReady   atomic.Bool  // /readyz answers 503
 	served     atomic.Int64 // data requests served (evidence for load balancing)
@@ -22,6 +23,8 @@ type Faults struct {
 
 func (f *Faults) Latency() time.Duration        { return time.Duration(f.latency.Load()) }
 func (f *Faults) WriteDelay() time.Duration     { return time.Duration(f.writeDelay.Load()) }
+func (f *Faults) ReadDelay() time.Duration      { return time.Duration(f.readDelay.Load()) }
+func (f *Faults) SetReadDelay(d time.Duration)  { f.readDelay.Store(int64(d)) }
 func (f *Faults) SetLatency(d time.Duration)    { f.latency.Store(int64(d)) }
 func (f *Faults) SetWriteDelay(d time.Duration) { f.writeDelay.Store(int64(d)) }
 func (f *Faults) SetFail(v bool)                { f.fail.Store(v) }
@@ -43,18 +46,19 @@ func sleep(ctx context.Context, d time.Duration) {
 type faultState struct {
 	Latency    string `json:"latency"`
 	WriteDelay string `json:"write_delay"`
+	ReadDelay  string `json:"read_delay"`
 	Fail       bool   `json:"fail"`
 	NotReady   bool   `json:"not_ready"`
 	Served     int64  `json:"served"`
 }
 
 // AdminHandler serves GET/POST /admin/faults and GET /admin/stats.
-// POST /admin/faults?latency=300ms&write_delay=3s&fail=true&ready=false, ?reset=1
+// POST /admin/faults?latency=300ms&read_delay=1s&write_delay=3s&fail=true&ready=false, ?reset=1
 func (f *Faults) AdminHandler() http.Handler {
 	mux := http.NewServeMux()
 	state := func(w http.ResponseWriter) {
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(faultState{f.Latency().String(), f.WriteDelay().String(),
+		_ = json.NewEncoder(w).Encode(faultState{f.Latency().String(), f.WriteDelay().String(), f.ReadDelay().String(),
 			f.fail.Load(), f.notReady.Load(), f.served.Load()})
 	}
 	mux.HandleFunc("GET /admin/faults", func(w http.ResponseWriter, r *http.Request) { state(w) })
@@ -64,6 +68,7 @@ func (f *Faults) AdminHandler() http.Handler {
 		if q.Get("reset") != "" {
 			f.SetLatency(0)
 			f.SetWriteDelay(0)
+			f.SetReadDelay(0)
 			f.SetFail(false)
 			f.SetNotReady(false)
 		}
@@ -75,6 +80,11 @@ func (f *Faults) AdminHandler() http.Handler {
 		if v := q.Get("write_delay"); v != "" {
 			if d, err := time.ParseDuration(v); err == nil {
 				f.SetWriteDelay(d)
+			}
+		}
+		if v := q.Get("read_delay"); v != "" {
+			if d, err := time.ParseDuration(v); err == nil {
+				f.SetReadDelay(d)
 			}
 		}
 		if v := q.Get("fail"); v != "" {
