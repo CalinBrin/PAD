@@ -38,53 +38,94 @@ tests/          unit, contract, integration, failure (+ testutil: pornește repl
 deployment/     Dockerfile (toate serviciile, testele și uneltele)
 docs/           adr/ (0001-0006), diagrams/, runbook/, failure-scenarios.md, guarantees-and-limits.md,
                 evidence/ (demo-*.log, results/*.json, summary.csv, summary.md)
-scripts/        demo.sh (scenariile de eșec), bench.sh (măsurătorile)
+scripts/        smoke (verificare rapidă), demo (scenariile de eșec), bench (măsurătorile): .sh și .ps1
 docker-compose.yml, .env.example
 ```
 
 ## Rulare
 
-Necesită doar Docker (Docker Desktop pe Windows/macOS). Nu se instalează Cassandra sau Redis: rulează în containere.
+Necesită doar **Docker Desktop** (Windows sau macOS), pornit. Cassandra și Redis nu se instalează: rulează în containere. Go nu e necesar.
 
-```bash
-docker compose up --build -d      # prima pornire ~1-2 minute (Cassandra)
-docker compose ps                 # toate healthy; "schema" exited (0)
+### 1. Pornirea
+
+Din folderul `Laborator3`, în PowerShell (Windows) sau Terminal (macOS):
+
+```
+docker compose up --build -d
 ```
 
-Câteva cereri:
+Prima pornire durează 2–3 minute: se descarcă imaginile, se compilează serviciile, apoi Cassandra are nevoie de ~1 minut. Verificare:
+
+```
+docker compose ps
+```
+
+`cassandra`, `redis`, `dw-1`, `dw-2`, `dw-3` și `proxy` trebuie să fie `healthy`, `source-json` și `source-xml` `Up`. `schema` apare doar cu `docker compose ps -a`, ca `Exited (0)`: a creat tabelele și s-a oprit.
+
+### 2. Verificarea rapidă (~20 s)
+
+Windows:
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\smoke.ps1
+```
+macOS / Linux:
+```bash
+./scripts/smoke.sh
+```
+
+Face 14 verificări pe sistemul pornit: proxy și 3 replici în rotație, MISS apoi HIT, JSON și XML, rutele din enunț, round-robin pe dw-1/dw-2/dw-3, POST cu `Idempotency-Key` și preluarea lui de nodul sursă XML, conexiuni reutilizate, registrul din Redis. La final: `All 14 checks passed.`
+
+(`-ExecutionPolicy Bypass` e necesar pentru că Windows blochează implicit scripturile `.ps1`; se aplică doar acestei comenzi.)
+
+### 3. Încercat manual
+
+Windows (în PowerShell scrie `curl.exe`, nu `curl`, care e alt program acolo):
+
+```powershell
+curl.exe -i http://localhost:8080/employees/emp-j-001                    # JSON; X-Cache: MISS
+curl.exe -i http://localhost:8080/employees/emp-j-001                    # X-Cache: HIT
+curl.exe -H "Accept: application/xml" http://localhost:8080/employees/emp-x-002
+curl.exe "http://localhost:8080/employees/?offset=1&limit=4"
+curl.exe -s http://127.0.0.1:8081/proxy/stats                           # cache, replici, conexiuni
+docker compose logs -f proxy                                             # Ctrl+C pentru ieșire
+```
+
+macOS: aceleași comenzi, cu `curl` în loc de `curl.exe`. O modificare de la client (macOS):
 
 ```bash
-curl -i localhost:8080/employees/emp-j-001                          # JSON; X-Cache: MISS
-curl -i localhost:8080/employees/emp-j-001                          # X-Cache: HIT
-curl -H 'Accept: application/xml' localhost:8080/employees/emp-x-002   # XML
-curl 'localhost:8080/employees/?offset=1&limit=4'                   # pagina, ca în enunț
-curl 'localhost:8080/employee/?id=emp-j-003'                        # alias din enunț
 curl -X POST localhost:8080/employees/emp-x-003 -H 'Idempotency-Key: k1' \
-     -H 'Content-Type: application/json' -d '{"salary":45000}'     # modificare de la client
-docker compose logs source-xml | grep change_applied                # sursa a preluat-o (pull)
-curl -s localhost:8081/proxy/stats                                  # cache, replici, conexiuni
-curl -s localhost:8081/proxy/clients                                # registrul din Redis
+     -H 'Content-Type: application/json' -d '{"salary":45000}'
+docker compose logs source-xml | grep change_applied                    # sursa a preluat-o (pull)
 ```
 
-Clientul CLI (în rețeaua Docker): `docker compose run --rm tools go run ./src/client -url http://proxy:8080 -format xml get emp-x-001`.
+Clientul CLI din proiect (oriunde, rulează în Docker):
+`docker compose run --rm tools go run ./src/client -url http://proxy:8080 -format xml get emp-x-001`
 
-PowerShell: aceleași comenzi, cu `curl.exe` în loc de `curl`.
+### 4. Scenariile de eșec și măsurătorile
 
-### Teste
+| | Windows | macOS / Linux | Durată | Rezultat |
+|---|---|---|---|---|
+| scenariile de eșec | `powershell -ExecutionPolicy Bypass -File scripts\demo.ps1` | `./scripts/demo.sh` | ~2 min | `docs/evidence/demo-*.log` |
+| măsurătorile | `powershell -ExecutionPolicy Bypass -File scripts\bench.ps1` | `./scripts/bench.sh` | ~4 min | `docs/evidence/results/` |
 
-```bash
-docker compose run --rm tests     # toate testele, cu -race, plus testele pe Cassandra reală
-go test -race ./...               # local (cu Go 1.24+); testele Cassandra se sar
+Ambele opresc și repornesc containere (dw-2, dw-3, redis) și rescriu fișierele de dovezi din repository. Scripturile PowerShell merg cu Windows PowerShell 5.1 (inclus în Windows) și cu PowerShell 7.
+
+### 5. Testele automate
+
+```
+docker compose run --rm tests
 ```
 
-### Dovezile
+Toate testele (unit, contract, integrare, eșec), cu detectorul de data race, plus testele pe Cassandra reală. Cu Go 1.24+ instalat: `go test -race ./...` (testele Cassandra se sar).
 
-```bash
-./scripts/demo.sh                 # scenariile de eșec → docs/evidence/demo-*.log   (~2 min)
-./scripts/bench.sh 20s 16         # măsurătorile      → docs/evidence/results/       (~4 min)
+### 6. Oprirea
+
+```
+docker compose down       # oprește, păstrează datele
+docker compose down -v    # oprește și șterge datele (Cassandra, Redis)
 ```
 
-Scripturile sunt bash (macOS, Linux, WSL, Git Bash). Oprire: `docker compose down -v`.
+Probleme frecvente: `docs/runbook/runbook.md` (de exemplu, Cassandra fără suficientă memorie: în Docker Desktop → Settings → Resources, cel puțin 4 GB).
 
 ## Cerințele laboratorului
 
