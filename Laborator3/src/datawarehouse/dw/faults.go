@@ -20,8 +20,8 @@ type Faults struct {
 	served     atomic.Int64 // data requests served (evidence for load balancing)
 }
 
-func (f *Faults) Latency() time.Duration    { return time.Duration(f.latency.Load()) }
-func (f *Faults) WriteDelay() time.Duration { return time.Duration(f.writeDelay.Load()) }
+func (f *Faults) Latency() time.Duration        { return time.Duration(f.latency.Load()) }
+func (f *Faults) WriteDelay() time.Duration     { return time.Duration(f.writeDelay.Load()) }
 func (f *Faults) SetLatency(d time.Duration)    { f.latency.Store(int64(d)) }
 func (f *Faults) SetWriteDelay(d time.Duration) { f.writeDelay.Store(int64(d)) }
 func (f *Faults) SetFail(v bool)                { f.fail.Store(v) }

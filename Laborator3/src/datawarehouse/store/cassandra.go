@@ -2,9 +2,9 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"encoding/json"
 	"time"
 
 	"github.com/gocql/gocql"
