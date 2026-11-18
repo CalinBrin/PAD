@@ -122,6 +122,10 @@ func (c *Controller) fail(w http.ResponseWriter, r *http.Request, err error) {
 		status, code = http.StatusUnprocessableEntity, "idempotency_key_reused"
 	case errors.Is(err, store.ErrConflict):
 		status, code = http.StatusConflict, "conflict"
+	case errors.Is(err, store.ErrInternal):
+		status, code = http.StatusInternalServerError, "storage_error"
+		c.log.Error("storage rejected the request", "event", "storage_error", "error", err,
+			"correlation_id", logx.CorrelationID(r.Context()))
 	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
 		status, code = http.StatusServiceUnavailable, "timeout"
 	default:

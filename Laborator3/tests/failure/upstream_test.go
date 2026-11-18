@@ -1,12 +1,15 @@
 package failure
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
 	"pad-lab3/src/common/httpx"
 	"pad-lab3/src/common/model"
+	"pad-lab3/src/datawarehouse/store"
 	"pad-lab3/src/proxy/balancer"
 	"pad-lab3/src/proxy/proxy"
 	"pad-lab3/tests/testutil"
@@ -188,5 +191,35 @@ func TestCachedAnswersSurviveWhenEveryReplicaIsDown(t *testing.T) {
 	}
 	if r := c.Do(t, "GET", "/employees/b", nil, nil); r.Status != 502 && r.Status != 503 {
 		t.Fatalf("uncached answer with every replica down: %d", r.Status)
+	}
+}
+
+// brokenFeed makes the change-feed query fail inside the database (like the
+// Cassandra SAI bug met during the Docker run) while everything else works.
+type brokenFeed struct{ store.Store }
+
+func (brokenFeed) ChangedSince(context.Context, time.Time, int) ([]model.Employee, error) {
+	return nil, fmt.Errorf("%w: query rejected", store.ErrInternal)
+}
+
+// Regression: a request that always fails with 500 must not open the
+// breakers of every replica (and take the whole service down).
+func TestRequestErrorDoesNotTakeReplicasOutOfRotation(t *testing.T) {
+	c := testutil.Start(t, testutil.Options{Replicas: 3, BreakerThreshold: 2,
+		Store: func(s store.Store) store.Store { return brokenFeed{s} }})
+	c.Seed(t, "a", 1)
+	for i := 0; i < 10; i++ {
+		r := c.Do(t, "GET", "/updates/employees", nil, nil)
+		if r.Status != 500 || r.Header.Get("X-Attempts") != "1" {
+			t.Fatalf("feed: %d attempts=%s (500 is not retried)", r.Status, r.Header.Get("X-Attempts"))
+		}
+	}
+	for _, b := range c.Pool.Backends() {
+		if b.Breaker.State() != balancer.Closed {
+			t.Fatalf("%s breaker %s after request errors", b.Name, b.Breaker.State())
+		}
+	}
+	if r := c.Do(t, "GET", "/employees/a", nil, nil); r.Status != 200 {
+		t.Fatalf("the service must still work: %d", r.Status)
 	}
 }

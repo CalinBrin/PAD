@@ -360,12 +360,19 @@ func (p *Proxy) forward(ctx context.Context, r *http.Request, body []byte) resul
 		res := p.attempt(ctx, b, r, body)
 		res.attempts = attempt
 		last = res
+		// Only the signals that the replica itself is unhealthy count against
+		// it: no answer, 502, 503, 504. A 500 is an error of this request
+		// (the replica answered): it neither opens the breaker nor is retried.
+		nodeFailure := res.err != nil || res.status == http.StatusBadGateway ||
+			res.status == http.StatusServiceUnavailable || res.status == http.StatusGatewayTimeout
 		switch {
 		case res.err != nil && errors.Is(ctx.Err(), context.Canceled):
 			b.Breaker.Release() // the client left: says nothing about the backend
 			return res
-		case res.err == nil && res.status < 500:
-			if b.Breaker.Success() {
+		case !nodeFailure:
+			if res.status >= 500 {
+				b.Breaker.Release()
+			} else if b.Breaker.Success() {
 				p.log.Info("circuit breaker closed", "event", "breaker_closed", "backend", b.Name)
 			}
 			return res
@@ -377,18 +384,13 @@ func (p *Proxy) forward(ctx context.Context, r *http.Request, body []byte) resul
 			p.log.Warn("circuit breaker opened", "event", "breaker_open", "backend", b.Name,
 				"correlation_id", logx.CorrelationID(ctx))
 		}
-		retryable := res.err != nil || res.status == http.StatusBadGateway ||
-			res.status == http.StatusServiceUnavailable || res.status == http.StatusGatewayTimeout
 		errText := ""
 		if res.err != nil {
 			errText = res.err.Error()
 		}
 		p.log.Warn("upstream attempt failed", "event", "upstream_failed", "backend", b.Name, "attempt", attempt,
-			"status", res.status, "error", errText, "will_retry", retryable && attempt < max && idempotent(r),
+			"status", res.status, "error", errText, "will_retry", attempt < max,
 			"method", r.Method, "path", r.URL.Path, "correlation_id", logx.CorrelationID(ctx))
-		if !retryable {
-			return res
-		}
 	}
 	return last
 }

@@ -18,8 +18,12 @@ var (
 	ErrNotFound = errors.New("not found")
 	// ErrConflict: the compare-and-set lost against a concurrent writer.
 	ErrConflict = errors.New("version conflict")
-	// ErrUnavailable: the database cannot be reached.
+	// ErrUnavailable: the database cannot be reached or did not answer in
+	// time (the node is unhealthy: HTTP 503, the proxy may retry elsewhere).
 	ErrUnavailable = errors.New("storage unavailable")
+	// ErrInternal: the database rejected this request (HTTP 500: a problem of
+	// the request, not of the node; the proxy does not count it against the node).
+	ErrInternal = errors.New("storage error")
 )
 
 // IdemRecord is the stored answer of a POST sent with an Idempotency-Key.

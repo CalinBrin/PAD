@@ -1,0 +1,183 @@
+# Start:  docker compose up --build -d          (first start: ~1-2 min, Cassandra)
+# Tests:  docker compose run --rm tests
+# Tools:  docker compose run --rm tools go run ./src/loadgen -url http://proxy:8080 -admin http://proxy:8081 ...
+#
+# Clients reach the warehouse only through the proxy (port 8080). The
+# warehouse replicas publish no data port; their admin ports (fault
+# injection) and the proxy admin port are bound to 127.0.0.1 only.
+name: pad-lab3
+
+x-dw: &dw
+  image: pad-lab3-dw
+  restart: unless-stopped
+  depends_on:
+    schema: { condition: service_completed_successfully }
+  healthcheck:
+    test: ["CMD", "wget", "-qO-", "http://localhost:8000/readyz"]
+    interval: 3s
+    timeout: 2s
+    retries: 20
+
+x-dw-env: &dw-env
+  LOG_FORMAT: ${LOG_FORMAT:-text}
+  DW_STORE: cassandra
+  CASSANDRA_HOSTS: cassandra
+  CASSANDRA_KEYSPACE: pad_lab3
+  CASSANDRA_CONSISTENCY: ${CASSANDRA_CONSISTENCY:-QUORUM}
+  DW_LISTEN: ":8000"
+  DW_ADMIN_LISTEN: ":9000"
+  DW_STORE_TIMEOUT: ${DW_STORE_TIMEOUT:-2s}
+  DW_CACHE_MAX_AGE: ${DW_CACHE_MAX_AGE:-30}
+  DW_FEED_OVERLAP: ${DW_FEED_OVERLAP:-5s}
+  DW_MAX_INFLIGHT: ${DW_MAX_INFLIGHT:-256}
+
+x-source: &source
+  image: pad-lab3-source
+  restart: unless-stopped
+  depends_on:
+    proxy: { condition: service_healthy }
+
+services:
+  cassandra:
+    image: cassandra:5.0.2
+    environment:
+      CASSANDRA_CLUSTER_NAME: pad-lab3
+      MAX_HEAP_SIZE: ${CASSANDRA_HEAP:-768M}
+      HEAP_NEWSIZE: 128M
+    volumes: ["cassandra-data:/var/lib/cassandra"]
+    healthcheck:
+      test: ["CMD-SHELL", "cqlsh -e 'SELECT release_version FROM system.local' > /dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 40s
+
+  # creates the keyspace and the tables once, then exits
+  schema:
+    build: { context: ., dockerfile: deployment/Dockerfile, args: { SERVICE: src/datawarehouse } }
+    image: pad-lab3-dw
+    command: ["-migrate"]
+    environment:
+      LOG_FORMAT: ${LOG_FORMAT:-text}
+      CASSANDRA_HOSTS: cassandra
+      CASSANDRA_KEYSPACE: pad_lab3
+      CASSANDRA_RF: 1
+    depends_on:
+      cassandra: { condition: service_healthy }
+    restart: "no"
+
+  dw-1:
+    <<: *dw
+    environment: { <<: *dw-env, DW_NODE_NAME: dw-1 }
+    ports: ["127.0.0.1:9101:9000"]
+  dw-2:
+    <<: *dw
+    environment: { <<: *dw-env, DW_NODE_NAME: dw-2 }
+    ports: ["127.0.0.1:9102:9000"]
+  dw-3:
+    <<: *dw
+    environment: { <<: *dw-env, DW_NODE_NAME: dw-3 }
+    ports: ["127.0.0.1:9103:9000"]
+
+  redis:
+    image: redis:7.4.1-alpine
+    # volatile-lru evicts only keys with a TTL (cache entries, request records),
+    # never the generation counters gen:* (ADR 0002)
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "128mb", "--maxmemory-policy", "volatile-lru"]
+    volumes: ["redis-data:/data"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+
+  proxy:
+    build: { context: ., dockerfile: deployment/Dockerfile, args: { SERVICE: src/proxy } }
+    image: pad-lab3-proxy
+    restart: unless-stopped
+    environment:
+      LOG_FORMAT: ${LOG_FORMAT:-text}
+      PROXY_ID: proxy-1
+      PROXY_LISTEN: ":8080"
+      PROXY_ADMIN_LISTEN: ":8081"
+      PROXY_BACKENDS: dw-1=http://dw-1:8000,dw-2=http://dw-2:8000,dw-3=http://dw-3:8000
+      PROXY_ALGORITHM: ${PROXY_ALGORITHM:-round_robin}
+      REDIS_ADDR: redis:6379
+      CACHE_ENABLED: ${CACHE_ENABLED:-true}
+      CACHE_TTL: ${CACHE_TTL:-30s}
+      WRITE_GRACE: ${WRITE_GRACE:-3s}
+      UPSTREAM_TIMEOUT: ${UPSTREAM_TIMEOUT:-2s}
+      REQUEST_TIMEOUT: ${REQUEST_TIMEOUT:-6s}
+      MAX_ATTEMPTS: ${MAX_ATTEMPTS:-3}
+      HEALTH_INTERVAL: ${HEALTH_INTERVAL:-2s}
+      HEALTH_TIMEOUT: ${HEALTH_TIMEOUT:-1s}
+      BREAKER_THRESHOLD: ${BREAKER_THRESHOLD:-3}
+      BREAKER_COOLDOWN: ${BREAKER_COOLDOWN:-5s}
+      CLIENT_IDLE_TIMEOUT: ${CLIENT_IDLE_TIMEOUT:-120s}
+      MAX_CONNS_PER_CLIENT: ${MAX_CONNS_PER_CLIENT:-100}
+    ports: ["8080:8080", "127.0.0.1:8081:8081"]
+    depends_on:
+      redis: { condition: service_healthy }
+      dw-1: { condition: service_started }
+      dw-2: { condition: service_started }
+      dw-3: { condition: service_started }
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8081/readyz"]
+      interval: 3s
+      timeout: 2s
+      retries: 30
+
+  source-json:
+    <<: *source
+    build: { context: ., dockerfile: deployment/Dockerfile, args: { SERVICE: src/source-node } }
+    environment:
+      LOG_FORMAT: ${LOG_FORMAT:-text}
+      NODE_NAME: source-json
+      NODE_FORMAT: json
+      SOURCE_ID_PREFIX: emp-j
+      SOURCE_SEED_COUNT: ${SOURCE_SEED_COUNT:-20}
+      SOURCE_DATA_DIR: /data
+      SOURCE_POLL_INTERVAL: ${SOURCE_POLL_INTERVAL:-2s}
+      SOURCE_MUTATE_INTERVAL: ${SOURCE_MUTATE_INTERVAL:-0}
+      PROXY_URL: http://proxy:8080
+    volumes: ["source-json-data:/data"]
+
+  source-xml:
+    <<: *source
+    environment:
+      LOG_FORMAT: ${LOG_FORMAT:-text}
+      NODE_NAME: source-xml
+      NODE_FORMAT: xml
+      SOURCE_ID_PREFIX: emp-x
+      SOURCE_SEED_COUNT: ${SOURCE_SEED_COUNT:-20}
+      SOURCE_DATA_DIR: /data
+      SOURCE_POLL_INTERVAL: ${SOURCE_POLL_INTERVAL:-2s}
+      SOURCE_MUTATE_INTERVAL: ${SOURCE_MUTATE_INTERVAL:-0}
+      PROXY_URL: http://proxy:8080
+    volumes: ["source-xml-data:/data"]
+    depends_on:
+      proxy: { condition: service_healthy }
+      source-json: { condition: service_started }
+
+  tests:
+    build: { context: ., dockerfile: deployment/Dockerfile, target: dev }
+    image: pad-lab3-dev
+    command: ["go", "test", "-race", "-count=1", "./..."]
+    environment:
+      CASSANDRA_HOSTS: cassandra
+    depends_on:
+      cassandra: { condition: service_healthy }
+    profiles: ["test"]
+
+  # loadgen and client inside the compose network; results written to the host
+  tools:
+    image: pad-lab3-dev
+    build: { context: ., dockerfile: deployment/Dockerfile, target: dev }
+    volumes: ["./docs/evidence:/src/docs/evidence"]
+    profiles: ["tools"]
+
+volumes:
+  cassandra-data:
+  redis-data:
+  source-json-data:
+  source-xml-data:

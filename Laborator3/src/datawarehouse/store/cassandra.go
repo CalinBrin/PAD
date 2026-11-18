@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"time"
 
 	"github.com/gocql/gocql"
@@ -108,11 +109,22 @@ func scanEmployee(sc interface{ Scan(...any) bool }) (model.Employee, bool) {
 	return e, ok
 }
 
+// wrap classifies a driver error: unavailable / timeout (the node cannot
+// serve, 503) or an error of this request (500).
 func wrap(err error) error {
 	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return err
 	}
-	return fmt.Errorf("%w: %v", ErrUnavailable, err)
+	var unavailable *gocql.RequestErrUnavailable
+	var readTimeout *gocql.RequestErrReadTimeout
+	var writeTimeout *gocql.RequestErrWriteTimeout
+	var netErr net.Error
+	if errors.As(err, &unavailable) || errors.As(err, &readTimeout) || errors.As(err, &writeTimeout) ||
+		errors.As(err, &netErr) || errors.Is(err, gocql.ErrNoConnections) || errors.Is(err, gocql.ErrTimeoutNoResponse) ||
+		errors.Is(err, gocql.ErrConnectionClosed) || errors.Is(err, gocql.ErrSessionClosed) {
+		return fmt.Errorf("%w: %v", ErrUnavailable, err)
+	}
+	return fmt.Errorf("%w: %v", ErrInternal, err)
 }
 
 func (c *Cassandra) Get(ctx context.Context, id string) (model.Employee, error) {
@@ -173,7 +185,13 @@ func (c *Cassandra) CompareAndSet(ctx context.Context, e model.Employee, expecte
 }
 
 func (c *Cassandra) ChangedSince(ctx context.Context, since time.Time, max int) ([]model.Employee, error) {
-	it := c.s.Query(`SELECT `+cols+` FROM employees WHERE updated_at > ?`, since).WithContext(ctx).PageSize(500).Iter()
+	q := c.s.Query(`SELECT `+cols+` FROM employees WHERE updated_at > ?`, since)
+	if since.Before(time.Unix(0, 0)) {
+		// first pull (no cursor): every row. Cassandra 5.0.2 SAI fails on a
+		// range bound before the epoch (year 1, Go's zero time).
+		q = c.s.Query(`SELECT ` + cols + ` FROM employees`)
+	}
+	it := q.WithContext(ctx).PageSize(500).Iter()
 	out := []model.Employee{}
 	for {
 		e, ok := scanEmployee(it)
